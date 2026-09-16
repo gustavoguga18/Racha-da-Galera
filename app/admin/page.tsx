@@ -345,51 +345,65 @@ function parseWhatsAppList(text: string) {
     .map((line) => line.trim())
     .filter(Boolean);
 
-  const names = lines
-    .map((line) => {
-      let name = line;
+  const ignored = [
+    "racha",
+    "lista",
+    "jogadores",
+    "confirmados",
+    "presentes",
+  ];
 
-      // Remove números:
-      // 1. Gustavo
-      // 1) Gustavo
-      // 1- Gustavo
-      // 1 Gustavo
-      name = name.replace(
-        /^\s*\d+\s*[\.\)\-:]?\s*/,
-        ""
-      );
+  const names: string[] = [];
 
-      // Remove alguns símbolos comuns
-      name = name
-        .replace(/^[•\-–—]+\s*/, "")
-        .replace(/✅|❌|☑️|✔️|❎/g, "")
-        .trim();
+  for (const line of lines) {
+    let name = line;
 
-      return name;
-    })
-    .filter((name) => {
-      if (!name) return false;
+    // Remove numeração:
+    // 1. Gustavo
+    // 1) Gustavo
+    // 1- Gustavo
+    // 1: Gustavo
+    // 1 Gustavo
+    name = name.replace(
+      /^\s*\d+\s*[\.\)\-:]?\s*/,
+      ""
+    );
 
-      // Ignora linhas que claramente não são jogadores
-      const ignored = [
-        "racha",
-        "lista",
-        "jogadores",
-        "confirmados",
-        "presentes",
-      ];
+    // Remove marcadores comuns do WhatsApp
+    name = name
+      .replace(/^[•\-–—]+\s*/, "")
+      .replace(/^[*_~]+|[*_~]+$/g, "")
+      .replace(/✅|❌|☑️|✔️|❎/g, "")
+      .trim();
 
-      return !ignored.includes(
-        name.toLowerCase()
-      );
-    });
+    if (!name) continue;
 
-  // Remove nomes duplicados
-  return Array.from(
-    new Set(
-      names.map((name) => name.trim())
-    )
-  );
+    // Ignora títulos/cabeçalhos
+    if (ignored.includes(name.toLowerCase())) {
+      continue;
+    }
+
+    names.push(name);
+  }
+
+  // Remove duplicados ignorando maiúsculas/minúsculas
+  const uniqueNames: string[] = [];
+  const seen = new Set<string>();
+
+  for (const name of names) {
+    const normalized = name
+      .trim()
+      .toLowerCase();
+
+    if (seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    uniqueNames.push(name.trim());
+  }
+
+  return uniqueNames;
 }
   /* =======================================================
      PRESENÇA
@@ -3273,7 +3287,15 @@ function parseWhatsAppList(text: string) {
       >
         Encontrar jogadores
       </button>
-
+      {importedNames.length > 0 && (
+  <button
+    type="button"
+    className="button"
+    onClick={importWhatsAppPlayers}
+  >
+    ⚽ Importar para a racha
+  </button>
+)}
       <button
         type="button"
         className="button secondary"
