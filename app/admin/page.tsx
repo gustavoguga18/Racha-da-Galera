@@ -4026,9 +4026,8 @@ function parseWhatsAppList(text: string) {
                     )
                   )}
                 </div>
-              </div>
+                            </div>
 
-              {
             </>
 
           ) : (
