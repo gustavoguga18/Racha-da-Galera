@@ -5135,7 +5135,7 @@ await loadPlayers(groupId);
           : "Em andamento"}
       </span>
       {expandedGameId === game.id && (
-  <div>
+  <div className="game-history-details">
     <h4>⚽ Gols</h4>
 
     {gameGoals.length === 0 ? (
