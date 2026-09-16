@@ -205,7 +205,14 @@ export default function Admin() {
   const [presentPlayers, setPresentPlayers] = useState<string[]>(
     []
   );
+const [showImportWhatsApp, setShowImportWhatsApp] =
+  useState(false);
 
+const [whatsappText, setWhatsappText] =
+  useState("");
+
+const [importedNames, setImportedNames] =
+  useState<string[]>([]);
   const [playersPerTeam, setPlayersPerTeam] = useState("5");
 
   const [startingRacha, setStartingRacha] = useState(false);
@@ -332,7 +339,58 @@ export default function Admin() {
 
     return `${year}-${month}-${day}`;
   }
+function parseWhatsAppList(text: string) {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
 
+  const names = lines
+    .map((line) => {
+      let name = line;
+
+      // Remove números:
+      // 1. Gustavo
+      // 1) Gustavo
+      // 1- Gustavo
+      // 1 Gustavo
+      name = name.replace(
+        /^\s*\d+\s*[\.\)\-:]?\s*/,
+        ""
+      );
+
+      // Remove alguns símbolos comuns
+      name = name
+        .replace(/^[•\-–—]+\s*/, "")
+        .replace(/✅|❌|☑️|✔️|❎/g, "")
+        .trim();
+
+      return name;
+    })
+    .filter((name) => {
+      if (!name) return false;
+
+      // Ignora linhas que claramente não são jogadores
+      const ignored = [
+        "racha",
+        "lista",
+        "jogadores",
+        "confirmados",
+        "presentes",
+      ];
+
+      return !ignored.includes(
+        name.toLowerCase()
+      );
+    });
+
+  // Remove nomes duplicados
+  return Array.from(
+    new Set(
+      names.map((name) => name.trim())
+    )
+  );
+}
   /* =======================================================
      PRESENÇA
   ======================================================= */
@@ -3132,6 +3190,168 @@ export default function Admin() {
                 quantos jogadores haverá
                 em cada time.
               </p>
+              <div
+  style={{
+    marginTop: "16px",
+    display: "flex",
+    gap: "10px",
+    flexWrap: "wrap",
+  }}
+>
+  <button
+    type="button"
+    className="button"
+    onClick={() =>
+      setShowImportWhatsApp(
+        (current) => !current
+      )
+    }
+  >
+    📋 Importar lista do WhatsApp
+  </button>
+</div>
+
+{showImportWhatsApp && (
+  <div
+    className="card"
+    style={{
+      marginTop: "16px",
+    }}
+  >
+    <h3>
+      📋 Importar lista do WhatsApp
+    </h3>
+
+    <p className="muted">
+      Copie a lista do WhatsApp e
+      cole abaixo.
+    </p>
+
+    <textarea
+      value={whatsappText}
+      onChange={(e) =>
+        setWhatsappText(
+          e.target.value
+        )
+      }
+      placeholder={`Exemplo:
+
+1. Gustavo
+2. João
+3. Pedro
+4. Lucas
+5. Carlos`}
+      rows={8}
+      style={{
+        width: "100%",
+        marginTop: "12px",
+        resize: "vertical",
+      }}
+    />
+
+    <div
+      style={{
+        marginTop: "12px",
+        display: "flex",
+        gap: "10px",
+        flexWrap: "wrap",
+      }}
+    >
+      <button
+        type="button"
+        className="button"
+        onClick={() => {
+          const names =
+            parseWhatsAppList(
+              whatsappText
+            );
+
+          setImportedNames(
+            names
+          );
+        }}
+      >
+        Encontrar jogadores
+      </button>
+
+      <button
+        type="button"
+        className="button secondary"
+        onClick={() => {
+          setWhatsappText("");
+          setImportedNames([]);
+        }}
+      >
+        Limpar
+      </button>
+    </div>
+
+    {importedNames.length >
+      0 && (
+      <div
+        style={{
+          marginTop: "20px",
+        }}
+      >
+        <b>
+          Jogadores encontrados:
+        </b>
+
+        <div
+          style={{
+            marginTop: "10px",
+            display: "flex",
+            flexDirection:
+              "column",
+            gap: "8px",
+          }}
+        >
+          {importedNames.map(
+            (name) => {
+              const existing =
+                players.find(
+                  (player) =>
+                    player.name
+                      .trim()
+                      .toLowerCase() ===
+                    name
+                      .trim()
+                      .toLowerCase()
+                );
+
+              return (
+                <div
+                  key={name}
+                  style={{
+                    display: "flex",
+                    justifyContent:
+                      "space-between",
+                    alignItems:
+                      "center",
+                    gap: "10px",
+                  }}
+                >
+                  <span>
+                    {existing
+                      ? "✓"
+                      : "＋"}{" "}
+                    {name}
+                  </span>
+
+                  <small>
+                    {existing
+                      ? "Já cadastrado"
+                      : "Novo jogador"}
+                  </small>
+                </div>
+              );
+            }
+          )}
+        </div>
+      </div>
+    )}
+  </div>
+)}
             </div>
 
             <span className="present-count">
