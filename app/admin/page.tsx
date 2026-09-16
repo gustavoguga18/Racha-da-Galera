@@ -5136,11 +5136,49 @@ await loadPlayers(groupId);
       </span>
       {expandedGameId === game.id && (
   <div>
-    <p>Jogo aberto!</p>
+    <h4>⚽ Gols</h4>
 
-    <p>
-      Gols registrados: {gameGoals.length}
-    </p>
+    {gameGoals.length === 0 ? (
+      <p>
+        Nenhum gol registrado.
+      </p>
+    ) : (
+      gameGoals.map((goal) => (
+        <div key={goal.id}>
+          <p>
+            ⚽{" "}
+            <strong>
+              {getGamePlayerName(
+                goal.scorer_id
+              )}
+            </strong>
+
+            {" — "}
+
+            {getGameTeamName(
+              goal.team_id
+            )}
+          </p>
+
+          {goal.is_own_goal ? (
+            <p>
+              🔴 Gol contra
+            </p>
+          ) : goal.assist_id ? (
+            <p>
+              🎯 Assistência:{" "}
+              {getGamePlayerName(
+                goal.assist_id
+              )}
+            </p>
+          ) : (
+            <p>
+              🎯 Sem assistência
+            </p>
+          )}
+        </div>
+      ))
+    )}
   </div>
 )}
     </div>
