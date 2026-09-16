@@ -5105,6 +5105,15 @@ await loadPlayers(groupId);
           ? "Finalizado"
           : "Em andamento"}
       </span>
+      {expandedGameId === game.id && (
+  <div>
+    <p>Jogo aberto!</p>
+
+    <p>
+      Gols registrados: {gameGoals.length}
+    </p>
+  </div>
+)}
     </div>
   )
 )}
