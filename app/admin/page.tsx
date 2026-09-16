@@ -405,6 +405,109 @@ function parseWhatsAppList(text: string) {
 
   return uniqueNames;
 }
+  async function importWhatsAppPlayers() {
+  if (!groupId || importedNames.length === 0) {
+    return;
+  }
+
+  try {
+    const selectedIds: string[] = [];
+
+    for (const importedName of importedNames) {
+      const cleanName = importedName.trim();
+
+      if (!cleanName) continue;
+
+      const existing = players.find(
+        (player) =>
+          player.name.trim().toLowerCase() ===
+          cleanName.toLowerCase()
+      );
+
+      if (existing) {
+        selectedIds.push(existing.id);
+        continue;
+      }
+
+      const { data: created, error } =
+        await supabase
+          .from("players")
+          .insert({
+            group_id: groupId,
+            name: cleanName,
+          })
+          .select()
+          .single();
+
+      if (error) {
+        console.error(
+          "Erro ao criar jogador importado:",
+          error
+        );
+
+        continue;
+      }
+
+      if (created) {
+        selectedIds.push(created.id);
+      }
+    }
+
+    await loadPlayers(groupId);
+
+    if (racha && racha.status === "open") {
+      const attendanceRows = selectedIds.map(
+        (playerId) => ({
+          racha_id: racha.id,
+          player_id: playerId,
+          present: true,
+        })
+      );
+
+      if (attendanceRows.length > 0) {
+        const { error: attendanceError } =
+          await supabase
+            .from("racha_attendance")
+            .upsert(
+              attendanceRows,
+              {
+                onConflict:
+                  "racha_id,player_id",
+              }
+            );
+
+        if (attendanceError) {
+          throw attendanceError;
+        }
+
+        await loadAttendance(racha.id);
+      }
+    } else {
+      setPresentPlayers(selectedIds);
+    }
+
+    setWhatsappText("");
+    setImportedNames([]);
+    setShowImportWhatsApp(false);
+
+    alert(
+      `${selectedIds.length} jogador${
+        selectedIds.length !== 1 ? "es" : ""
+      } importado${
+        selectedIds.length !== 1 ? "s" : ""
+      } com sucesso!`
+    );
+  } catch (error) {
+    console.error(
+      "Erro ao importar jogadores do WhatsApp:",
+      error
+    );
+
+    alert(
+      "Não foi possível importar a lista."
+    );
+  }
+}
   /* =======================================================
      PRESENÇA
   ======================================================= */
