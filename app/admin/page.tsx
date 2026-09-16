@@ -5086,34 +5086,7 @@ function parseWhatsAppList(text: string) {
                   </div>
                 )}
 
-              {racha.status === "open" && (
-                <div className="card">
-                  <div className="section-title">
-                    <div>
-                      <h2>
-                        <CheckCircle2 />
-                        Encerrar racha
-                      </h2>
-                      <p className="muted">
-                        Finalize o racha de hoje para gerar o resumo completo,
-                        com estatísticas dos times e notas dos jogadores.
-                      </p>
-                    </div>
-
-                    <button
-                      className="finish-button"
-                      type="button"
-                      onClick={finishRacha}
-                      disabled={finishingRacha}
-                    >
-                      <CheckCircle2 size={17} />
-                      {finishingRacha
-                        ? "Finalizando..."
-                        : "Finalizar racha"}
-                    </button>
-                  </div>
-                </div>
-              )}
+              
 
               {/* =========================================
                   HISTÓRICO DOS JOGOS
