@@ -3216,14 +3216,6 @@ function parseWhatsAppList(text: string) {
         <a className="active">
           Racha de hoje
         </a>
-
-        <a href="/admin/jogadores">
-          Jogadores
-        </a>
-
-        <a href="/admin/historico">
-          Histórico
-        </a>
       </nav>
 
       {/* ===================================================
