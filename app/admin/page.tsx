@@ -717,7 +717,16 @@ function getGamePlayerName(
 
   return player?.name || "Jogador";
 }
+function getGameTeamName(
+  poolTeamId: string
+) {
+  const team = poolTeams.find(
+    (team) =>
+      team.id === poolTeamId
+  );
 
+  return team?.name || "Time";
+}
   /* =======================================================
      CARREGAR RACHA DE HOJE
   ======================================================= */
