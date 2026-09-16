@@ -2199,3 +2199,16 @@ textarea::placeholder {
     animation: none !important;
   }
 }
+.game-history-details {
+  margin-top: 14px;
+  padding: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.game-history-details h4 {
+  margin: 0 0 12px;
+}
+
+.game-history-details p {
+  margin: 6px 0;
+}
