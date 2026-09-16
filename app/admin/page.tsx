@@ -3383,12 +3383,13 @@ export default function Admin() {
           </div>
 
           {/* ===============================================
-    RACHA FINALIZADO
-=============================================== */}
+              RACHA FINALIZADO
+          =============================================== */}
 
-{racha.status === "finished" ? (
-  <>
-    <div className="card">
+          {racha.status ===
+          "finished" ? (
+            <>
+              <div className="card">
                 <div className="section-title">
                   <div>
                     <span className="badge">
@@ -3682,6 +3683,88 @@ export default function Admin() {
                 </div>
               </div>
 
+              {/* =========================================
+                  RANKING DE ASSISTÊNCIAS
+              ========================================= */}
+
+              <div className="card">
+                <div className="section-title">
+                  <div>
+                    <h2>
+                      <Target />
+                      Ranking de assistências
+                    </h2>
+                  </div>
+                </div>
+
+                <div className="stats">
+                  {[
+                    ...finalPlayerStats,
+                  ]
+                    .sort(
+                      (
+                        a,
+                        b
+                      ) => {
+                        if (
+                          b.assists !==
+                          a.assists
+                        ) {
+                          return (
+                            b.assists -
+                            a.assists
+                          );
+                        }
+
+                        return (
+                          b.goals -
+                          a.goals
+                        );
+                      }
+                    )
+                    .map(
+                      (
+                        item,
+                        index
+                      ) => (
+                        <div
+                          key={
+                            item.player
+                              ?.id
+                          }
+                        >
+                          <Target />
+
+                          <b>
+                            {index +
+                              1}
+                            .{" "}
+                            {
+                              item
+                                .player
+                                ?.name
+                            }
+                          </b>
+
+                          <span>
+                            {
+                              item.assists
+                            }{" "}
+                            assistência
+                            {item.assists !==
+                            1
+                              ? "s"
+                              : ""}
+                          </span>
+                        </div>
+                      )
+                    )}
+                </div>
+              </div>
+            </>
+
+          ) : (
+            <>
               {/* =========================================
                   TIMES FIXOS
               ========================================= */}
@@ -4691,7 +4774,7 @@ export default function Admin() {
                   HISTÓRICO DOS JOGOS
               ========================================= */}
 
-                            <div className="card">
+              <div className="card">
                 <div className="section-title">
                   <div>
                     <h2>
@@ -4702,24 +4785,37 @@ export default function Admin() {
                 </div>
 
                 <div className="stats">
-                  {games.map((game) => (
-                    <div key={game.id}>
-                      <Trophy />
+                  {games.map(
+                    (game) => (
+                      <div
+                        key={
+                          game.id
+                        }
+                      >
+                        <Trophy />
 
-                      <b>
-                        Jogo {game.game_number}
-                      </b>
+                        <b>
+                          Jogo{" "}
+                          {
+                            game.game_number
+                          }
+                        </b>
 
-                      <span>
-  {game.status === "finished"
-    ? "Finalizado"
-    : "Em andamento"}
-</span>
-</div>
-))}
-</div>
-</div>
-</>
-</main>
-);
+                        <span>
+                          {game.status ===
+                          "finished"
+                            ? "Finalizado"
+                            : "Em andamento"}
+                        </span>
+                      </div>
+                    )
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </>
+      )}
+    </main>
+  );
 }
