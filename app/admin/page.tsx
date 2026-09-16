@@ -189,6 +189,8 @@ export default function Admin() {
   >([]);
 
   const [games, setGames] = useState<Game[]>([]);
+  const [expandedGameId, setExpandedGameId] =
+  useState<string | null>(null);
   const [currentGame, setCurrentGame] = useState<Game | null>(
     null
   );
