@@ -3383,12 +3383,12 @@ export default function Admin() {
           </div>
 
           {/* ===============================================
-              RACHA FINALIZADO
-          =============================================== */}
+    RACHA FINALIZADO
+=============================================== */}
 
-          {racha.status === "finished" && (
-            <>
-              <div className="card">
+{racha.status === "finished" ? (
+  <>
+    <div className="card">
                 <div className="section-title">
                   <div>
                     <span className="badge">
@@ -4691,7 +4691,7 @@ export default function Admin() {
                   HISTÓRICO DOS JOGOS
               ========================================= */}
 
-              <div className="card">
+                            <div className="card">
                 <div className="section-title">
                   <div>
                     <h2>
@@ -4702,34 +4702,25 @@ export default function Admin() {
                 </div>
 
                 <div className="stats">
-                  {games.map(
-                    (game) => (
-                      <div
-                        key={
-                          game.id
-                        }
-                      >
-                        <Trophy />
+                  {games.map((game) => (
+                    <div key={game.id}>
+                      <Trophy />
 
-                        <b>
-                          Jogo{" "}
-                          {
-                            game.game_number
-                          }
-                        </b>
+                      <b>
+                        Jogo {game.game_number}
+                      </b>
 
-                        <span>
-                          {game.status ===
-                          "finished"
-                            ? "Finalizado"
-                            : "Em andamento"}
-                        </span>
-                      </div>
-                    )
-                  )}
+                      <span>
+                        {game.status === "finished"
+                          ? "Finalizado"
+                          : "Em andamento"}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-                            </div>
-            )}
+              </div>
+            </>
+          )}
         </>
       )}
     </main>
