@@ -1815,7 +1815,9 @@ const { error: goalHistoryError } = await supabase
   .insert({
     game_id: currentGame.id,
     scorer_id: scorer.id,
-    assist_id: goalForm.assist || null,
+    assist_id: goalForm.assist
+  ? getGamePlayer(goalForm.assist)?.id || null
+  : null,
     team_id: scorer.pool_team_id,
     is_own_goal: isOwnGoal,
   });
