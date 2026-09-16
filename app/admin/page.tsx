@@ -697,6 +697,26 @@ function parseWhatsAppList(text: string) {
 
     resetTimer(game.id);
   }
+function getGamePlayerName(
+  gamePlayerId: string
+) {
+  const gamePlayer =
+    gamePlayers.find(
+      (player) =>
+        player.id === gamePlayerId
+    );
+
+  if (!gamePlayer) {
+    return "Jogador";
+  }
+
+  const player = players.find(
+    (p) =>
+      p.id === gamePlayer.player_id
+  );
+
+  return player?.name || "Jogador";
+}
 
   /* =======================================================
      CARREGAR RACHA DE HOJE
