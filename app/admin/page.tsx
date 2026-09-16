@@ -3386,8 +3386,7 @@ export default function Admin() {
               RACHA FINALIZADO
           =============================================== */}
 
-          {racha.status ===
-          "finished" ? (
+          {racha.status === "finished" && (
             <>
               <div className="card">
                 <div className="section-title">
@@ -4729,9 +4728,8 @@ export default function Admin() {
                     )
                   )}
                 </div>
-              </div>
-            </>
-          )}
+                            </div>
+            )}
         </>
       )}
     </main>
