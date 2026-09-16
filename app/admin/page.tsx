@@ -14,6 +14,10 @@ import {
   Plus,
   Minus,
   Shield,
+  Pause,
+  Square,
+  Clock,
+  ArrowRightLeft,
 } from "lucide-react";
 
 type Group = {
@@ -46,6 +50,14 @@ type Game = {
   racha_id: string;
   game_number: number;
   status: "open" | "finished";
+  duration_minutes: number;
+  timer_elapsed_seconds: number;
+  timer_started_at: string | null;
+  timer_status:
+    | "stopped"
+    | "running"
+    | "paused"
+    | "finished";
   created_at: string;
 };
 
@@ -81,11 +93,22 @@ type GoalForm = {
   assist: string;
 };
 
+const TEAM_COLORS = [
+  "#2563eb",
+  "#dc2626",
+  "#16a34a",
+  "#eab308",
+  "#9333ea",
+  "#f97316",
+  "#0891b2",
+  "#db2777",
+];
+
 export default function Admin() {
   const supabase = createClient();
 
   // =========================================================
-  // ESTADO GERAL
+  // GERAL
   // =========================================================
 
   const [groups, setGroups] = useState<Group[]>([]);
@@ -105,34 +128,60 @@ export default function Admin() {
   // =========================================================
 
   const [racha, setRacha] = useState<Racha | null>(null);
+
   const [games, setGames] = useState<Game[]>([]);
-  const [currentGame, setCurrentGame] = useState<Game | null>(null);
+  const [currentGame, setCurrentGame] =
+    useState<Game | null>(null);
 
   const [teams, setTeams] = useState<Team[]>([]);
-  const [gamePlayers, setGamePlayers] = useState<GamePlayer[]>([]);
+  const [gamePlayers, setGamePlayers] = useState<
+    GamePlayer[]
+  >([]);
 
-  const [attendance, setAttendance] = useState<Attendance[]>([]);
-  const [presentPlayers, setPresentPlayers] = useState<string[]>([]);
+  const [presentPlayers, setPresentPlayers] =
+    useState<string[]>([]);
 
-  const [playersPerTeam, setPlayersPerTeam] = useState(5);
+  const [playersPerTeam, setPlayersPerTeam] =
+    useState(5);
 
-  const [startingRacha, setStartingRacha] = useState(false);
-  const [startingGame, setStartingGame] = useState(false);
-  const [finishingGame, setFinishingGame] = useState(false);
-  const [finishingRacha, setFinishingRacha] = useState(false);
+  // duração do próximo jogo
+  const [gameDuration, setGameDuration] =
+    useState(10);
+
+  const [startingRacha, setStartingRacha] =
+    useState(false);
+
+  const [startingGame, setStartingGame] =
+    useState(false);
+
+  const [finishingGame, setFinishingGame] =
+    useState(false);
+
+  const [finishingRacha, setFinishingRacha] =
+    useState(false);
+
+  // =========================================================
+  // CRONÔMETRO
+  // =========================================================
+
+  const [timerSeconds, setTimerSeconds] =
+    useState(0);
 
   // =========================================================
   // GOL
   // =========================================================
 
-  const [showGoalForm, setShowGoalForm] = useState(false);
+  const [showGoalForm, setShowGoalForm] =
+    useState(false);
 
-  const [goalForm, setGoalForm] = useState<GoalForm>({
-    scorer: "",
-    assist: "",
-  });
+  const [goalForm, setGoalForm] =
+    useState<GoalForm>({
+      scorer: "",
+      assist: "",
+    });
 
-  const [savingGoal, setSavingGoal] = useState(false);
+  const [savingGoal, setSavingGoal] =
+    useState(false);
 
   // =========================================================
   // DATA
@@ -141,15 +190,15 @@ export default function Admin() {
   function getToday() {
     const now = new Date();
 
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    const day = String(now.getDate()).padStart(2, "0");
-
-    return `${year}-${month}-${day}`;
+    return `${now.getFullYear()}-${String(
+      now.getMonth() + 1
+    ).padStart(2, "0")}-${String(
+      now.getDate()
+    ).padStart(2, "0")}`;
   }
 
   // =========================================================
-  // CARREGAR GRUPOS
+  // GRUPOS
   // =========================================================
 
   async function loadGroups() {
@@ -168,32 +217,27 @@ export default function Admin() {
       .order("created_at");
 
     if (error) {
-      console.error("Erro ao carregar grupos:", error);
+      console.error(error);
       setGroups([]);
       setLoading(false);
       return;
     }
 
-    const loadedGroups = data || [];
+    setGroups(data || []);
 
-    setGroups(loadedGroups);
-
-    if (!groupId && loadedGroups.length > 0) {
-      setGroupId(loadedGroups[0].id);
+    if (!groupId && data && data.length > 0) {
+      setGroupId(data[0].id);
     }
 
     setLoading(false);
   }
 
   // =========================================================
-  // CARREGAR JOGADORES
+  // JOGADORES
   // =========================================================
 
   async function loadPlayers(id: string) {
-    if (!id) {
-      setPlayers([]);
-      return;
-    }
+    if (!id) return;
 
     setLoadingPlayers(true);
 
@@ -201,10 +245,12 @@ export default function Admin() {
       .from("player_overalls")
       .select("*")
       .eq("group_id", id)
-      .order("overall", { ascending: false });
+      .order("overall", {
+        ascending: false,
+      });
 
     if (error) {
-      console.error("Erro ao carregar jogadores:", error);
+      console.error(error);
       setPlayers([]);
     } else {
       setPlayers(data || []);
@@ -214,41 +260,29 @@ export default function Admin() {
   }
 
   // =========================================================
-  // CARREGAR RACHA DE HOJE
+  // RACHA DE HOJE
   // =========================================================
 
   async function loadTodayRacha(id: string) {
-    if (!id) {
-      setRacha(null);
-      setGames([]);
-      setCurrentGame(null);
-      setTeams([]);
-      setGamePlayers([]);
-      setAttendance([]);
-      setPresentPlayers([]);
-      return;
-    }
+    if (!id) return;
 
     setLoadingRacha(true);
 
-    const today = getToday();
+    const { data: existingRacha, error } =
+      await supabase
+        .from("rachas")
+        .select("*")
+        .eq("group_id", id)
+        .eq("played_on", getToday())
+        .eq("status", "open")
+        .order("created_at", {
+          ascending: false,
+        })
+        .limit(1)
+        .maybeSingle();
 
-    // -------------------------------------------------------
-    // RACHA
-    // -------------------------------------------------------
-
-    const { data: existingRacha, error: rachaError } = await supabase
-      .from("rachas")
-      .select("*")
-      .eq("group_id", id)
-      .eq("played_on", today)
-      .eq("status", "open")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    if (rachaError) {
-      console.error("Erro ao carregar racha:", rachaError);
+    if (error) {
+      console.error(error);
       setLoadingRacha(false);
       return;
     }
@@ -259,107 +293,121 @@ export default function Admin() {
       setCurrentGame(null);
       setTeams([]);
       setGamePlayers([]);
-      setAttendance([]);
       setPresentPlayers([]);
+      setTimerSeconds(0);
+
       setLoadingRacha(false);
       return;
     }
 
     setRacha(existingRacha);
-    setPlayersPerTeam(existingRacha.players_per_team);
 
-    // -------------------------------------------------------
+    setPlayersPerTeam(
+      existingRacha.players_per_team
+    );
+
+    // =======================================================
     // PRESENÇA
-    // -------------------------------------------------------
+    // =======================================================
 
-    const { data: loadedAttendance, error: attendanceError } =
+    const { data: attendance } =
       await supabase
         .from("racha_attendance")
         .select("*")
         .eq("racha_id", existingRacha.id);
 
-    if (attendanceError) {
-      console.error("Erro ao carregar presença:", attendanceError);
-    }
+    const present =
+      (attendance || [])
+        .filter(
+          (item: Attendance) =>
+            item.present
+        )
+        .map(
+          (item: Attendance) =>
+            item.player_id
+        );
 
-    const attendanceData = loadedAttendance || [];
+    setPresentPlayers(present);
 
-    setAttendance(attendanceData);
-
-    setPresentPlayers(
-      attendanceData
-        .filter((item: Attendance) => item.present)
-        .map((item: Attendance) => item.player_id)
-    );
-
-    // -------------------------------------------------------
+    // =======================================================
     // JOGOS
-    // -------------------------------------------------------
+    // =======================================================
 
-    const { data: loadedGames, error: gamesError } = await supabase
-      .from("racha_games")
-      .select("*")
-      .eq("racha_id", existingRacha.id)
-      .order("game_number", { ascending: true });
+    const { data: loadedGames } =
+      await supabase
+        .from("racha_games")
+        .select("*")
+        .eq(
+          "racha_id",
+          existingRacha.id
+        )
+        .order("game_number", {
+          ascending: true,
+        });
 
-    if (gamesError) {
-      console.error("Erro ao carregar jogos:", gamesError);
-      setGames([]);
-      setCurrentGame(null);
-      setLoadingRacha(false);
-      return;
-    }
-
-    const gameData = loadedGames || [];
+    const gameData =
+      loadedGames || [];
 
     setGames(gameData);
 
-    // Procura jogo aberto
     const openGame =
-      gameData.find((game: Game) => game.status === "open") || null;
+      gameData.find(
+        (game: Game) =>
+          game.status === "open"
+      ) || null;
 
     if (!openGame) {
       setCurrentGame(null);
       setTeams([]);
       setGamePlayers([]);
+      setTimerSeconds(0);
+
       setLoadingRacha(false);
       return;
     }
 
     setCurrentGame(openGame);
 
-    // -------------------------------------------------------
+    // =======================================================
+    // TIMER
+    // =======================================================
+
+    const elapsed =
+      calculateTimerSeconds(openGame);
+
+    setTimerSeconds(elapsed);
+
+    // =======================================================
     // TIMES
-    // -------------------------------------------------------
+    // =======================================================
 
-    const { data: loadedTeams, error: teamsError } = await supabase
-      .from("racha_teams")
-      .select("*")
-      .eq("game_id", openGame.id);
+    const { data: loadedTeams } =
+      await supabase
+        .from("racha_teams")
+        .select("*")
+        .eq(
+          "game_id",
+          openGame.id
+        );
 
-    if (teamsError) {
-      console.error("Erro ao carregar times:", teamsError);
-    }
+    setTeams(loadedTeams || []);
 
-    // -------------------------------------------------------
-    // JOGADORES DO JOGO
-    // -------------------------------------------------------
+    // =======================================================
+    // JOGADORES
+    // =======================================================
 
-    const { data: loadedGamePlayers, error: gamePlayersError } =
+    const { data: loadedGamePlayers } =
       await supabase
         .from("racha_game_players")
         .select("*")
-        .eq("game_id", openGame.id);
+        .eq(
+          "game_id",
+          openGame.id
+        );
 
-    if (gamePlayersError) {
-      console.error(
-        "Erro ao carregar jogadores do jogo:",
-        gamePlayersError
-      );
-    }
-
-    setTeams(loadedTeams || []);
-    setGamePlayers(loadedGamePlayers || []);
+    setGamePlayers(
+      loadedGamePlayers || []
+    );
 
     setLoadingRacha(false);
   }
@@ -372,10 +420,6 @@ export default function Admin() {
     loadGroups();
   }, []);
 
-  // =========================================================
-  // TROCA DE GRUPO
-  // =========================================================
-
   useEffect(() => {
     if (!groupId) return;
 
@@ -384,46 +428,344 @@ export default function Admin() {
   }, [groupId]);
 
   // =========================================================
+  // CRONÔMETRO
+  // =========================================================
+
+  function calculateTimerSeconds(
+    game: Game
+  ) {
+    if (
+      game.timer_status !==
+        "running" ||
+      !game.timer_started_at
+    ) {
+      return game.timer_elapsed_seconds;
+    }
+
+    const started =
+      new Date(
+        game.timer_started_at
+      ).getTime();
+
+    const now =
+      Date.now();
+
+    const extra = Math.floor(
+      (now - started) / 1000
+    );
+
+    return Math.min(
+      game.duration_minutes * 60,
+      game.timer_elapsed_seconds +
+        extra
+    );
+  }
+
+  useEffect(() => {
+    if (
+      !currentGame ||
+      currentGame.timer_status !==
+        "running"
+    ) {
+      return;
+    }
+
+    const interval =
+      setInterval(() => {
+        const seconds =
+          calculateTimerSeconds(
+            currentGame
+          );
+
+        setTimerSeconds(seconds);
+
+        if (
+          seconds >=
+          currentGame.duration_minutes *
+            60
+        ) {
+          finishTimerAutomatically();
+        }
+      }, 1000);
+
+    return () =>
+      clearInterval(interval);
+  }, [currentGame]);
+
+  // =========================================================
+  // FORMATAR TIMER
+  // =========================================================
+
+  function formatTime(seconds: number) {
+    const minutes =
+      Math.floor(seconds / 60);
+
+    const secs =
+      seconds % 60;
+
+    return `${String(
+      minutes
+    ).padStart(2, "0")}:${String(
+      secs
+    ).padStart(2, "0")}`;
+  }
+
+  // =========================================================
+  // INICIAR TIMER
+  // =========================================================
+
+  async function startTimer() {
+    if (!currentGame) return;
+
+    const elapsed =
+      timerSeconds;
+
+    if (
+      elapsed >=
+      currentGame.duration_minutes *
+        60
+    ) {
+      return;
+    }
+
+    const { error } =
+      await supabase
+        .from("racha_games")
+        .update({
+          timer_status:
+            "running",
+          timer_started_at:
+            new Date().toISOString(),
+          timer_elapsed_seconds:
+            elapsed,
+        })
+        .eq(
+          "id",
+          currentGame.id
+        );
+
+    if (error) {
+      console.error(error);
+      alert(
+        "Não foi possível iniciar o cronômetro."
+      );
+      return;
+    }
+
+    setCurrentGame({
+      ...currentGame,
+      timer_status:
+        "running",
+      timer_started_at:
+        new Date().toISOString(),
+      timer_elapsed_seconds:
+        elapsed,
+    });
+  }
+
+  // =========================================================
+  // PAUSAR TIMER
+  // =========================================================
+
+  async function pauseTimer() {
+    if (!currentGame) return;
+
+    const elapsed =
+      calculateTimerSeconds(
+        currentGame
+      );
+
+    const { error } =
+      await supabase
+        .from("racha_games")
+        .update({
+          timer_status:
+            "paused",
+          timer_started_at:
+            null,
+          timer_elapsed_seconds:
+            elapsed,
+        })
+        .eq(
+          "id",
+          currentGame.id
+        );
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    setTimerSeconds(elapsed);
+
+    setCurrentGame({
+      ...currentGame,
+      timer_status:
+        "paused",
+      timer_started_at:
+        null,
+      timer_elapsed_seconds:
+        elapsed,
+    });
+  }
+
+  // =========================================================
+  // FINALIZAR TIMER
+  // =========================================================
+
+  async function finishTimer() {
+    if (!currentGame) return;
+
+    const confirmed =
+      confirm(
+        "Deseja finalizar o tempo desta partida?"
+      );
+
+    if (!confirmed) return;
+
+    const elapsed =
+      calculateTimerSeconds(
+        currentGame
+      );
+
+    const { error } =
+      await supabase
+        .from("racha_games")
+        .update({
+          timer_status:
+            "finished",
+          timer_started_at:
+            null,
+          timer_elapsed_seconds:
+            Math.min(
+              elapsed,
+              currentGame.duration_minutes *
+                60
+            ),
+        })
+        .eq(
+          "id",
+          currentGame.id
+        );
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    const finalSeconds =
+      Math.min(
+        elapsed,
+        currentGame.duration_minutes *
+          60
+      );
+
+    setTimerSeconds(
+      finalSeconds
+    );
+
+    setCurrentGame({
+      ...currentGame,
+      timer_status:
+        "finished",
+      timer_started_at:
+        null,
+      timer_elapsed_seconds:
+        finalSeconds,
+    });
+  }
+
+  // =========================================================
+  // FINALIZAR AUTOMATICAMENTE
+  // =========================================================
+
+  async function finishTimerAutomatically() {
+    if (!currentGame) return;
+
+    if (
+      currentGame.timer_status !==
+      "running"
+    ) {
+      return;
+    }
+
+    const total =
+      currentGame.duration_minutes *
+      60;
+
+    await supabase
+      .from("racha_games")
+      .update({
+        timer_status:
+          "finished",
+        timer_started_at:
+          null,
+        timer_elapsed_seconds:
+          total,
+      })
+      .eq(
+        "id",
+        currentGame.id
+      );
+
+    setTimerSeconds(total);
+
+    setCurrentGame({
+      ...currentGame,
+      timer_status:
+        "finished",
+      timer_started_at:
+        null,
+      timer_elapsed_seconds:
+        total,
+    });
+  }
+
+  // =========================================================
   // CRIAR GRUPO
   // =========================================================
 
-  async function addGroup(e: React.FormEvent) {
+  async function addGroup(
+    e: React.FormEvent
+  ) {
     e.preventDefault();
 
-    const name = groupName.trim();
+    const name =
+      groupName.trim();
 
     if (!name) return;
 
     const {
       data: { user },
-    } = await supabase.auth.getUser();
+    } =
+      await supabase.auth.getUser();
 
     if (!user) return;
 
-    const { data, error } = await supabase
-      .from("groups")
-      .insert({
-        name,
-        owner_id: user.id,
-      })
-      .select()
-      .single();
+    const { data, error } =
+      await supabase
+        .from("groups")
+        .insert({
+          name,
+          owner_id:
+            user.id,
+        })
+        .select()
+        .single();
 
     if (error) {
-      console.error("Erro ao criar grupo:", error);
-      alert("Não foi possível criar o grupo.");
+      alert(
+        "Não foi possível criar o grupo."
+      );
       return;
     }
 
+    setGroupName("");
+
+    await loadGroups();
+
     if (data) {
-      setGroupName("");
-
-      await loadGroups();
-
       setGroupId(data.id);
-
-      await loadPlayers(data.id);
-      await loadTodayRacha(data.id);
     }
   }
 
@@ -431,59 +773,106 @@ export default function Admin() {
   // ADICIONAR JOGADOR
   // =========================================================
 
-  async function addPlayer(e: React.FormEvent) {
+  async function addPlayer(
+    e: React.FormEvent
+  ) {
     e.preventDefault();
 
-    const name = newPlayer.trim();
+    const name =
+      newPlayer.trim();
 
-    if (!name || !groupId) return;
+    if (
+      !name ||
+      !groupId
+    ) {
+      return;
+    }
 
-    const { error } = await supabase.from("players").insert({
-      group_id: groupId,
-      name,
-    });
+    const { error } =
+      await supabase
+        .from("players")
+        .insert({
+          group_id:
+            groupId,
+          name,
+        });
 
     if (error) {
-      console.error("Erro ao adicionar jogador:", error);
-      alert("Não foi possível adicionar o jogador.");
+      alert(
+        "Não foi possível adicionar o jogador."
+      );
       return;
     }
 
     setNewPlayer("");
 
-    await loadPlayers(groupId);
+    await loadPlayers(
+      groupId
+    );
   }
 
   // =========================================================
-  // SELECIONAR PRESENTE
+  // PRESENÇA
   // =========================================================
 
-  function togglePresent(playerId: string) {
+  function togglePresent(
+    playerId: string
+  ) {
     if (racha) return;
 
-    setPresentPlayers((current) => {
-      if (current.includes(playerId)) {
-        return current.filter((id) => id !== playerId);
-      }
+    setPresentPlayers(
+      (current) => {
+        if (
+          current.includes(
+            playerId
+          )
+        ) {
+          return current.filter(
+            (id) =>
+              id !== playerId
+          );
+        }
 
-      return [...current, playerId];
-    });
+        return [
+          ...current,
+          playerId,
+        ];
+      }
+    );
   }
 
   // =========================================================
-  // SORTEAR
+  // SORTEIO
   // =========================================================
 
-  function shufflePlayers(list: Player[]) {
-    const shuffled = [...list];
+  function shufflePlayers(
+    list: Player[]
+  ) {
+    const result =
+      [...list];
 
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+    for (
+      let i =
+        result.length - 1;
+      i > 0;
+      i--
+    ) {
+      const j =
+        Math.floor(
+          Math.random() *
+            (i + 1)
+        );
 
-      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+      [
+        result[i],
+        result[j],
+      ] = [
+        result[j],
+        result[i],
+      ];
     }
 
-    return shuffled;
+    return result;
   }
 
   // =========================================================
@@ -493,83 +882,108 @@ export default function Admin() {
   async function startRacha() {
     if (!groupId) return;
 
-    if (presentPlayers.length < playersPerTeam * 2) {
+    if (
+      presentPlayers.length <
+      2
+    ) {
       alert(
-        `São necessários pelo menos ${
-          playersPerTeam * 2
-        } jogadores presentes para jogar com ${playersPerTeam} por time.`
+        "É necessário ter pelo menos 2 jogadores."
       );
       return;
     }
 
-    setStartingRacha(true);
+    setStartingRacha(
+      true
+    );
 
     try {
-      // -----------------------------------------------------
-      // 1. CRIAR RACHA
-      // -----------------------------------------------------
+      const { data: newRacha, error } =
+        await supabase
+          .from("rachas")
+          .insert({
+            group_id:
+              groupId,
+            played_on:
+              getToday(),
+            status:
+              "open",
+            players_per_team:
+              playersPerTeam,
+          })
+          .select()
+          .single();
 
-      const { data: newRacha, error: rachaError } = await supabase
-        .from("rachas")
-        .insert({
-          group_id: groupId,
-          played_on: getToday(),
-          status: "open",
-          players_per_team: playersPerTeam,
-        })
-        .select()
-        .single();
+      if (
+        error ||
+        !newRacha
+      ) {
+        console.error(error);
 
-      if (rachaError || !newRacha) {
-        console.error("Erro ao criar racha:", rachaError);
-        alert("Não foi possível criar o racha.");
+        alert(
+          "Não foi possível criar o racha."
+        );
+
         return;
       }
 
-      // -----------------------------------------------------
-      // 2. REGISTRAR PRESENÇA
-      // -----------------------------------------------------
+      const attendanceRows =
+        presentPlayers.map(
+          (playerId) => ({
+            racha_id:
+              newRacha.id,
+            player_id:
+              playerId,
+            present: true,
+          })
+        );
 
-      const attendanceRows = presentPlayers.map((playerId) => ({
-        racha_id: newRacha.id,
-        player_id: playerId,
-        present: true,
-      }));
+      const {
+        error:
+          attendanceError,
+      } =
+        await supabase
+          .from(
+            "racha_attendance"
+          )
+          .insert(
+            attendanceRows
+          );
 
-      const { error: attendanceError } = await supabase
-        .from("racha_attendance")
-        .insert(attendanceRows);
-
-      if (attendanceError) {
+      if (
+        attendanceError
+      ) {
         console.error(
-          "Erro ao registrar presença:",
           attendanceError
         );
 
         await supabase
           .from("rachas")
           .delete()
-          .eq("id", newRacha.id);
+          .eq(
+            "id",
+            newRacha.id
+          );
 
-        alert("Não foi possível registrar a presença.");
+        alert(
+          "Não foi possível registrar a presença."
+        );
+
         return;
       }
 
-      setRacha(newRacha);
-      setAttendance(
-        attendanceRows.map((item) => ({
-          ...item,
-          id: "",
-        }))
+      setRacha(
+        newRacha
       );
 
-      // -----------------------------------------------------
-      // 3. CRIAR PRIMEIRO JOGO
-      // -----------------------------------------------------
-
-      await createGame(newRacha.id, 1, presentPlayers);
+      await createGame(
+        newRacha.id,
+        1,
+        presentPlayers
+      );
     } finally {
-      setStartingRacha(false);
+      setStartingRacha(
+        false
+      );
     }
   }
 
@@ -582,183 +996,265 @@ export default function Admin() {
     gameNumber: number,
     playerIds: string[]
   ) {
-    if (playerIds.length < playersPerTeam * 2) {
+    if (
+      playerIds.length <
+      2
+    ) {
       alert(
-        `Não há jogadores suficientes para criar o jogo. São necessários pelo menos ${
-          playersPerTeam * 2
-        }.`
+        "São necessários pelo menos 2 jogadores."
       );
       return false;
     }
 
-    setStartingGame(true);
+    setStartingGame(
+      true
+    );
 
     try {
-      // -----------------------------------------------------
-      // JOGO
-      // -----------------------------------------------------
-
-      const { data: newGame, error: gameError } = await supabase
-        .from("racha_games")
-        .insert({
-          racha_id: rachaId,
-          game_number: gameNumber,
-          status: "open",
-        })
-        .select()
-        .single();
-
-      if (gameError || !newGame) {
-        console.error("Erro ao criar jogo:", gameError);
-        alert("Não foi possível criar o jogo.");
-        return false;
-      }
-
-      // -----------------------------------------------------
-      // TIMES
-      // -----------------------------------------------------
-
-      const { data: newTeams, error: teamsError } = await supabase
-        .from("racha_teams")
-        .insert([
-          {
-            game_id: newGame.id,
-            name: "Time Azul",
-            color: "#2563eb",
-          },
-          {
-            game_id: newGame.id,
-            name: "Time Vermelho",
-            color: "#dc2626",
-          },
-        ])
-        .select();
-
-      if (teamsError || !newTeams || newTeams.length !== 2) {
-        console.error("Erro ao criar times:", teamsError);
-
+      const { data: newGame, error } =
         await supabase
-          .from("racha_games")
-          .delete()
-          .eq("id", newGame.id);
+          .from(
+            "racha_games"
+          )
+          .insert({
+            racha_id:
+              rachaId,
+            game_number:
+              gameNumber,
+            status:
+              "open",
+            duration_minutes:
+              gameDuration,
+            timer_elapsed_seconds:
+              0,
+            timer_status:
+              "stopped",
+          })
+          .select()
+          .single();
 
-        alert("Não foi possível criar os times.");
+      if (
+        error ||
+        !newGame
+      ) {
+        console.error(error);
+
+        alert(
+          "Não foi possível criar o jogo."
+        );
+
         return false;
       }
 
-      const blueTeam = newTeams.find(
-        (team: Team) => team.name === "Time Azul"
-      );
+      // =====================================================
+      // QUANTIDADE DE TIMES
+      // =====================================================
 
-      const redTeam = newTeams.find(
-        (team: Team) => team.name === "Time Vermelho"
-      );
+      const numberOfTeams =
+        Math.ceil(
+          playerIds.length /
+            playersPerTeam
+        );
 
-      if (!blueTeam || !redTeam) {
-        alert("Erro ao identificar os times.");
-        return false;
-      }
-
-      // -----------------------------------------------------
-      // SORTEIO
-      // -----------------------------------------------------
-
-      const selectedPlayers = players.filter((player) =>
-        playerIds.includes(player.id)
-      );
-
-      const shuffled = shufflePlayers(selectedPlayers);
-
-      const totalPlayers = playersPerTeam * 2;
-
-      const playingPlayers = shuffled.slice(0, totalPlayers);
-
-      const bluePlayers = playingPlayers.slice(
-        0,
-        playersPerTeam
-      );
-
-      const redPlayers = playingPlayers.slice(
-        playersPerTeam,
-        totalPlayers
-      );
-
-      // -----------------------------------------------------
-      // JOGADORES DO JOGO
-      // -----------------------------------------------------
-
-      const gamePlayerRows = [
-        ...bluePlayers.map((player) => ({
-          game_id: newGame.id,
-          team_id: blueTeam.id,
-          player_id: player.id,
-          role: "field" as const,
-        })),
-
-        ...redPlayers.map((player) => ({
-          game_id: newGame.id,
-          team_id: redTeam.id,
-          player_id: player.id,
-          role: "field" as const,
-        })),
-      ];
+      const teamRows =
+        Array.from(
+          {
+            length:
+              numberOfTeams,
+          },
+          (_, index) => ({
+            game_id:
+              newGame.id,
+            name:
+              `Time ${index + 1}`,
+            color:
+              TEAM_COLORS[
+                index %
+                  TEAM_COLORS.length
+              ],
+          })
+        );
 
       const {
-        data: createdGamePlayers,
-        error: gamePlayersError,
-      } = await supabase
-        .from("racha_game_players")
-        .insert(gamePlayerRows)
-        .select();
+        data: newTeams,
+        error:
+          teamsError,
+      } =
+        await supabase
+          .from(
+            "racha_teams"
+          )
+          .insert(
+            teamRows
+          )
+          .select();
 
-      if (gamePlayersError) {
+      if (
+        teamsError ||
+        !newTeams
+      ) {
         console.error(
-          "Erro ao registrar jogadores:",
-          gamePlayersError
+          teamsError
         );
 
         await supabase
-          .from("racha_games")
+          .from(
+            "racha_games"
+          )
           .delete()
-          .eq("id", newGame.id);
+          .eq(
+            "id",
+            newGame.id
+          );
 
-        alert("Não foi possível montar os times.");
+        alert(
+          "Não foi possível criar os times."
+        );
+
         return false;
       }
 
-      setCurrentGame(newGame);
+      // =====================================================
+      // SORTEAR TODOS
+      // =====================================================
 
-      setGames((current) => [...current, newGame]);
+      const selected =
+        players.filter(
+          (player) =>
+            playerIds.includes(
+              player.id
+            )
+        );
 
-      setTeams(newTeams);
+      const shuffled =
+        shufflePlayers(
+          selected
+        );
 
-      setGamePlayers(createdGamePlayers || []);
+      const gamePlayerRows =
+        shuffled.map(
+          (
+            player,
+            index
+          ) => {
+            const teamIndex =
+              Math.floor(
+                index /
+                  playersPerTeam
+              );
+
+            const team =
+              newTeams[
+                teamIndex
+              ];
+
+            return {
+              game_id:
+                newGame.id,
+              team_id:
+                team.id,
+              player_id:
+                player.id,
+              role:
+                "field" as const,
+            };
+          }
+        );
+
+      const {
+        data:
+          createdPlayers,
+        error:
+          playersError,
+      } =
+        await supabase
+          .from(
+            "racha_game_players"
+          )
+          .insert(
+            gamePlayerRows
+          )
+          .select();
+
+      if (
+        playersError
+      ) {
+        console.error(
+          playersError
+        );
+
+        await supabase
+          .from(
+            "racha_games"
+          )
+          .delete()
+          .eq(
+            "id",
+            newGame.id
+          );
+
+        alert(
+          "Não foi possível montar os times."
+        );
+
+        return false;
+      }
+
+      setCurrentGame(
+        newGame
+      );
+
+      setGames(
+        (current) => [
+          ...current,
+          newGame,
+        ]
+      );
+
+      setTeams(
+        newTeams
+      );
+
+      setGamePlayers(
+        createdPlayers ||
+          []
+      );
+
+      setTimerSeconds(0);
 
       return true;
     } finally {
-      setStartingGame(false);
+      setStartingGame(
+        false
+      );
     }
   }
 
   // =========================================================
-  // INICIAR PRÓXIMO JOGO
+  // PRÓXIMO JOGO
   // =========================================================
 
   async function startNextGame() {
     if (!racha) return;
 
-    if (presentPlayers.length < playersPerTeam * 2) {
+    if (
+      presentPlayers.length <
+      2
+    ) {
       alert(
-        `São necessários pelo menos ${
-          playersPerTeam * 2
-        } jogadores presentes para iniciar outro jogo.`
+        "São necessários pelo menos 2 jogadores."
       );
       return;
     }
 
     const nextNumber =
       games.length > 0
-        ? Math.max(...games.map((game) => game.game_number)) + 1
+        ? Math.max(
+            ...games.map(
+              (game) =>
+                game.game_number
+            )
+          ) + 1
         : 1;
 
     await createGame(
@@ -767,38 +1263,110 @@ export default function Admin() {
       presentPlayers
     );
 
-    await loadTodayRacha(groupId);
-  }
-
-  // =========================================================
-  // ENCONTRAR JOGADOR
-  // =========================================================
-
-  function getPlayer(playerId: string) {
-    return players.find((player) => player.id === playerId);
-  }
-
-  // =========================================================
-  // ENCONTRAR JOGADOR DO JOGO
-  // =========================================================
-
-  function getGamePlayer(playerId: string) {
-    return gamePlayers.find(
-      (player) => player.player_id === playerId
+    await loadTodayRacha(
+      groupId
     );
   }
 
   // =========================================================
-  // TIME DO JOGADOR
+  // MOVER JOGADOR DE TIME
   // =========================================================
 
-  function getPlayerTeam(playerId: string) {
-    const gp = getGamePlayer(playerId);
+  async function movePlayer(
+    gamePlayerId: string,
+    newTeamId: string
+  ) {
+    const selected =
+      gamePlayers.find(
+        (player) =>
+          player.id ===
+          gamePlayerId
+      );
+
+    if (
+      !selected ||
+      selected.team_id ===
+        newTeamId
+    ) {
+      return;
+    }
+
+    const { error } =
+      await supabase
+        .from(
+          "racha_game_players"
+        )
+        .update({
+          team_id:
+            newTeamId,
+        })
+        .eq(
+          "id",
+          gamePlayerId
+        );
+
+    if (error) {
+      console.error(
+        error
+      );
+
+      alert(
+        "Não foi possível mover o jogador."
+      );
+
+      return;
+    }
+
+    setGamePlayers(
+      (current) =>
+        current.map(
+          (player) =>
+            player.id ===
+            gamePlayerId
+              ? {
+                  ...player,
+                  team_id:
+                    newTeamId,
+                }
+              : player
+        )
+    );
+  }
+
+  // =========================================================
+  // JOGADOR
+  // =========================================================
+
+  function getPlayer(
+    playerId: string
+  ) {
+    return players.find(
+      (player) =>
+        player.id ===
+        playerId
+    );
+  }
+
+  // =========================================================
+  // TIME
+  // =========================================================
+
+  function getPlayerTeam(
+    playerId: string
+  ) {
+    const gp =
+      gamePlayers.find(
+        (player) =>
+          player.player_id ===
+          playerId
+      );
 
     if (!gp) return null;
 
-    return (
-      teams.find((team) => team.id === gp.team_id) || null
+    return teams.find(
+      (team) =>
+        team.id ===
+        gp.team_id
     );
   }
 
@@ -806,11 +1374,19 @@ export default function Admin() {
   // PLACAR
   // =========================================================
 
-  function getTeamScore(teamId: string) {
+  function getTeamScore(
+    teamId: string
+  ) {
     return gamePlayers
-      .filter((player) => player.team_id === teamId)
+      .filter(
+        (player) =>
+          player.team_id ===
+          teamId
+      )
       .reduce(
-        (total, player) => total + player.goals,
+        (total, player) =>
+          total +
+          player.goals,
         0
       );
   }
@@ -819,11 +1395,15 @@ export default function Admin() {
   // GOLEIRO
   // =========================================================
 
-  function getGoalkeeper(teamId: string) {
+  function getGoalkeeper(
+    teamId: string
+  ) {
     return gamePlayers.find(
       (player) =>
-        player.team_id === teamId &&
-        player.role === "goalkeeper"
+        player.team_id ===
+          teamId &&
+        player.role ===
+          "goalkeeper"
     );
   }
 
@@ -835,234 +1415,224 @@ export default function Admin() {
     gamePlayerId: string,
     teamId: string
   ) {
-    if (!currentGame) return;
+    const current =
+      getGoalkeeper(
+        teamId
+      );
 
-    const currentGoalkeeper = getGoalkeeper(teamId);
-
-    // Remove goleiro anterior
     if (
-      currentGoalkeeper &&
-      currentGoalkeeper.id !== gamePlayerId
+      current &&
+      current.id !==
+        gamePlayerId
     ) {
-      const { error } = await supabase
-        .from("racha_game_players")
+      await supabase
+        .from(
+          "racha_game_players"
+        )
         .update({
           role: "field",
         })
-        .eq("id", currentGoalkeeper.id);
-
-      if (error) {
-        console.error(
-          "Erro ao remover goleiro:",
-          error
+        .eq(
+          "id",
+          current.id
         );
-        return;
-      }
-
-      setGamePlayers((current) =>
-        current.map((player) =>
-          player.id === currentGoalkeeper.id
-            ? {
-                ...player,
-                role: "field",
-              }
-            : player
-        )
-      );
     }
 
-    const selected = gamePlayers.find(
-      (player) => player.id === gamePlayerId
-    );
+    const selected =
+      gamePlayers.find(
+        (player) =>
+          player.id ===
+          gamePlayerId
+      );
 
     if (!selected) return;
 
-    // Se clicar no goleiro atual, transforma em jogador de linha
-    if (
-      selected.role === "goalkeeper" &&
-      currentGoalkeeper?.id === gamePlayerId
-    ) {
-      const { error } = await supabase
-        .from("racha_game_players")
-        .update({
-          role: "field",
-        })
-        .eq("id", gamePlayerId);
+    const newRole =
+      selected.role ===
+        "goalkeeper"
+        ? "field"
+        : "goalkeeper";
 
-      if (error) {
-        console.error(
-          "Erro ao remover goleiro:",
-          error
-        );
-        return;
-      }
-
-      setGamePlayers((current) =>
-        current.map((player) =>
-          player.id === gamePlayerId
-            ? {
-                ...player,
-                role: "field",
-              }
-            : player
+    const { error } =
+      await supabase
+        .from(
+          "racha_game_players"
         )
-      );
-
-      return;
-    }
-
-    const { error } = await supabase
-      .from("racha_game_players")
-      .update({
-        role: "goalkeeper",
-      })
-      .eq("id", gamePlayerId);
+        .update({
+          role:
+            newRole,
+        })
+        .eq(
+          "id",
+          gamePlayerId
+        );
 
     if (error) {
       console.error(
-        "Erro ao definir goleiro:",
         error
       );
       return;
     }
 
-    setGamePlayers((current) =>
-      current.map((player) =>
-        player.id === gamePlayerId
-          ? {
-              ...player,
-              role: "goalkeeper",
+    setGamePlayers(
+      (currentPlayers) =>
+        currentPlayers.map(
+          (player) => {
+            if (
+              current &&
+              current.id ===
+                player.id &&
+              current.id !==
+                gamePlayerId
+            ) {
+              return {
+                ...player,
+                role: "field",
+              };
             }
-          : player
-      )
+
+            if (
+              player.id ===
+              gamePlayerId
+            ) {
+              return {
+                ...player,
+                role:
+                  newRole,
+              };
+            }
+
+            return player;
+          }
+        )
     );
   }
 
   // =========================================================
-  // ABRIR REGISTRO DE GOL
+  // GOL
   // =========================================================
 
-  function openGoalForm() {
-    setGoalForm({
-      scorer: "",
-      assist: "",
-    });
-
-    setShowGoalForm(true);
-  }
-
-  // =========================================================
-  // REGISTRAR GOL
-  // =========================================================
-
-  async function registerGoal(e: React.FormEvent) {
+  async function registerGoal(
+    e: React.FormEvent
+  ) {
     e.preventDefault();
 
-    if (!currentGame) return;
-
-    if (!goalForm.scorer) {
-      alert("Selecione quem fez o gol.");
+    if (
+      !currentGame ||
+      !goalForm.scorer
+    ) {
       return;
     }
 
     setSavingGoal(true);
 
     try {
-      const scorer = getGamePlayer(goalForm.scorer);
+      const scorer =
+        gamePlayers.find(
+          (player) =>
+            player.player_id ===
+            goalForm.scorer
+        );
 
-      if (!scorer || !scorer.team_id) {
-        alert("Jogador inválido.");
+      if (
+        !scorer ||
+        !scorer.team_id
+      ) {
         return;
       }
 
-      // -----------------------------------------------------
-      // GOL
-      // -----------------------------------------------------
-
-      const newGoals = scorer.goals + 1;
-
-      const { error: scorerError } = await supabase
-        .from("racha_game_players")
+      await supabase
+        .from(
+          "racha_game_players"
+        )
         .update({
-          goals: newGoals,
+          goals:
+            scorer.goals + 1,
         })
-        .eq("id", scorer.id);
-
-      if (scorerError) {
-        console.error(
-          "Erro ao registrar gol:",
-          scorerError
+        .eq(
+          "id",
+          scorer.id
         );
 
-        alert("Não foi possível registrar o gol.");
-        return;
-      }
-
-      // -----------------------------------------------------
-      // ASSISTÊNCIA
-      // -----------------------------------------------------
-
-      if (goalForm.assist) {
-        const assister = getGamePlayer(
-          goalForm.assist
-        );
+      // assistência
+      if (
+        goalForm.assist
+      ) {
+        const assister =
+          gamePlayers.find(
+            (player) =>
+              player.player_id ===
+              goalForm.assist
+          );
 
         if (assister) {
-          const { error: assistError } =
-            await supabase
-              .from("racha_game_players")
-              .update({
-                assists: assister.assists + 1,
-              })
-              .eq("id", assister.id);
-
-          if (assistError) {
-            console.error(
-              "Erro ao registrar assistência:",
-              assistError
+          await supabase
+            .from(
+              "racha_game_players"
+            )
+            .update({
+              assists:
+                assister.assists +
+                1,
+            })
+            .eq(
+              "id",
+              assister.id
             );
-          }
         }
       }
 
-      // -----------------------------------------------------
-      // GOL SOFRIDO PELO GOLEIRO
-      // -----------------------------------------------------
-
-      const opposingTeam = teams.find(
-        (team) => team.id !== scorer.team_id
-      );
+      // goleiro adversário
+      const opposingTeam =
+        teams.find(
+          (team) =>
+            team.id !==
+            scorer.team_id
+        );
 
       if (opposingTeam) {
-        const goalkeeper = getGoalkeeper(
-          opposingTeam.id
-        );
+        const goalkeeper =
+          getGoalkeeper(
+            opposingTeam.id
+          );
 
         if (goalkeeper) {
           await supabase
-            .from("racha_game_players")
+            .from(
+              "racha_game_players"
+            )
             .update({
               goals_conceded:
-                goalkeeper.goals_conceded + 1,
+                goalkeeper.goals_conceded +
+                1,
             })
-            .eq("id", goalkeeper.id);
+            .eq(
+              "id",
+              goalkeeper.id
+            );
         }
       }
 
-      // -----------------------------------------------------
-      // ATUALIZAR
-      // -----------------------------------------------------
-
-      await loadTodayRacha(groupId);
-
-      setShowGoalForm(false);
+      setShowGoalForm(
+        false
+      );
 
       setGoalForm({
         scorer: "",
         assist: "",
       });
+
+      await loadTodayRacha(
+        groupId
+      );
+
+      await loadPlayers(
+        groupId
+      );
     } finally {
-      setSavingGoal(false);
+      setSavingGoal(
+        false
+      );
     }
   }
 
@@ -1073,81 +1643,128 @@ export default function Admin() {
   async function finishGame() {
     if (!currentGame) return;
 
-    const confirmed = confirm(
-      `Deseja finalizar o Jogo ${currentGame.game_number}?`
-    );
+    const confirmed =
+      confirm(
+        `Finalizar o Jogo ${currentGame.game_number}?`
+      );
 
     if (!confirmed) return;
 
-    setFinishingGame(true);
+    setFinishingGame(
+      true
+    );
 
     try {
-      const { error } = await supabase
-        .from("racha_games")
-        .update({
-          status: "finished",
-        })
-        .eq("id", currentGame.id);
+      // se o timer estiver rodando,
+      // encerra o tempo também
+      const elapsed =
+        calculateTimerSeconds(
+          currentGame
+        );
+
+      const { error } =
+        await supabase
+          .from(
+            "racha_games"
+          )
+          .update({
+            status:
+              "finished",
+            timer_status:
+              "finished",
+            timer_started_at:
+              null,
+            timer_elapsed_seconds:
+              Math.min(
+                elapsed,
+                currentGame.duration_minutes *
+                  60
+              ),
+          })
+          .eq(
+            "id",
+            currentGame.id
+          );
 
       if (error) {
         console.error(
-          "Erro ao finalizar jogo:",
           error
         );
 
-        alert("Não foi possível finalizar o jogo.");
+        alert(
+          "Não foi possível finalizar o jogo."
+        );
+
         return;
       }
 
-      setCurrentGame(null);
+      setCurrentGame(
+        null
+      );
+
       setTeams([]);
       setGamePlayers([]);
+      setTimerSeconds(0);
 
-      await loadPlayers(groupId);
-      await loadTodayRacha(groupId);
+      await loadPlayers(
+        groupId
+      );
+
+      await loadTodayRacha(
+        groupId
+      );
     } finally {
-      setFinishingGame(false);
+      setFinishingGame(
+        false
+      );
     }
   }
 
   // =========================================================
-  // ENCERRAR RACHA
+  // FINALIZAR RACHA
   // =========================================================
 
   async function finishRacha() {
-    if (!racha) return;
+    if (
+      !racha ||
+      currentGame
+    ) {
+      return;
+    }
 
-    const confirmed = confirm(
-      "Tem certeza que deseja encerrar o racha de hoje? Depois disso não será possível iniciar outro jogo neste racha."
-    );
+    const confirmed =
+      confirm(
+        "Deseja realmente encerrar o racha de hoje?"
+      );
 
     if (!confirmed) return;
 
-    setFinishingRacha(true);
+    setFinishingRacha(
+      true
+    );
 
     try {
-      // Se existir jogo aberto, não permite encerrar
-      if (currentGame) {
-        alert(
-          "Finalize o jogo atual antes de encerrar o racha."
-        );
-        return;
-      }
-
-      const { error } = await supabase
-        .from("rachas")
-        .update({
-          status: "finished",
-        })
-        .eq("id", racha.id);
+      const { error } =
+        await supabase
+          .from("rachas")
+          .update({
+            status:
+              "finished",
+          })
+          .eq(
+            "id",
+            racha.id
+          );
 
       if (error) {
         console.error(
-          "Erro ao finalizar racha:",
           error
         );
 
-        alert("Não foi possível encerrar o racha.");
+        alert(
+          "Não foi possível encerrar o racha."
+        );
+
         return;
       }
 
@@ -1156,64 +1773,56 @@ export default function Admin() {
       setCurrentGame(null);
       setTeams([]);
       setGamePlayers([]);
-      setAttendance([]);
       setPresentPlayers([]);
-
-      await loadPlayers(groupId);
-      await loadTodayRacha(groupId);
     } finally {
-      setFinishingRacha(false);
+      setFinishingRacha(
+        false
+      );
     }
   }
 
   // =========================================================
-  // BANCO
-  // =========================================================
-
-  function getBenchPlayers() {
-    if (!racha) return [];
-
-    const playingIds = gamePlayers.map(
-      (player) => player.player_id
-    );
-
-    return players.filter(
-      (player) =>
-        presentPlayers.includes(player.id) &&
-        !playingIds.includes(player.id)
-    );
-  }
-
-  // =========================================================
-  // TOP ARTILHEIRO DO JOGO
+  // TOP
   // =========================================================
 
   function getTopScorer() {
-    if (!gamePlayers.length) return null;
+    if (
+      gamePlayers.length ===
+      0
+    ) {
+      return null;
+    }
 
-    const top = [...gamePlayers].sort(
-      (a, b) => b.goals - a.goals
-    )[0];
+    const top =
+      [...gamePlayers].sort(
+        (a, b) =>
+          b.goals -
+          a.goals
+      )[0];
 
-    if (!top || top.goals === 0) return null;
-
-    return top;
+    return top.goals > 0
+      ? top
+      : null;
   }
 
-  // =========================================================
-  // TOP GARÇOM DO JOGO
-  // =========================================================
-
   function getTopAssister() {
-    if (!gamePlayers.length) return null;
+    if (
+      gamePlayers.length ===
+      0
+    ) {
+      return null;
+    }
 
-    const top = [...gamePlayers].sort(
-      (a, b) => b.assists - a.assists
-    )[0];
+    const top =
+      [...gamePlayers].sort(
+        (a, b) =>
+          b.assists -
+          a.assists
+      )[0];
 
-    if (!top || top.assists === 0) return null;
-
-    return top;
+    return top.assists > 0
+      ? top
+      : null;
   }
 
   // =========================================================
@@ -1242,12 +1851,15 @@ export default function Admin() {
       ===================================================== */}
 
       <header className="top">
+
         <div>
           <span className="badge">
             ⚽ Racha FC
           </span>
 
-          <h1>Painel do organizador</h1>
+          <h1>
+            Painel do organizador
+          </h1>
         </div>
 
         <button
@@ -1257,6 +1869,7 @@ export default function Admin() {
           <LogOut size={17} />
           Sair
         </button>
+
       </header>
 
       {/* =====================================================
@@ -1268,28 +1881,38 @@ export default function Admin() {
         <select
           value={groupId}
           onChange={(e) =>
-            setGroupId(e.target.value)
+            setGroupId(
+              e.target.value
+            )
           }
         >
-          {groups.map((group) => (
-            <option
-              key={group.id}
-              value={group.id}
-            >
-              {group.name}
-            </option>
-          ))}
+          {groups.map(
+            (group) => (
+              <option
+                key={group.id}
+                value={group.id}
+              >
+                {group.name}
+              </option>
+            )
+          )}
         </select>
 
         <form
-          onSubmit={addGroup}
+          onSubmit={
+            addGroup
+          }
           className="inline"
         >
           <input
             placeholder="Novo grupo"
-            value={groupName}
+            value={
+              groupName
+            }
             onChange={(e) =>
-              setGroupName(e.target.value)
+              setGroupName(
+                e.target.value
+              )
             }
           />
 
@@ -1304,10 +1927,11 @@ export default function Admin() {
       </section>
 
       {/* =====================================================
-          MENU
+          TABS
       ===================================================== */}
 
       <nav className="tabs">
+
         <a className="active">
           Racha de hoje
         </a>
@@ -1319,27 +1943,28 @@ export default function Admin() {
         <a href="/admin/historico">
           Histórico
         </a>
+
       </nav>
 
       {/* =====================================================
-          RACHA
+          CONTEÚDO
       ===================================================== */}
 
       <section className="racha-area">
 
         {loadingRacha ? (
+
           <div className="card">
-            <p className="muted">
-              Carregando racha de hoje...
-            </p>
+            Carregando...
           </div>
+
         ) : !racha ? (
 
-          /* ==================================================
-             PRÉ-RACHA
-          ================================================== */
-
           <>
+            {/* =================================================
+                CONFIGURAÇÃO
+            ================================================= */}
+
             <div className="card">
 
               <div className="section-title">
@@ -1351,32 +1976,37 @@ export default function Admin() {
                   </h2>
 
                   <p className="muted">
-                    Selecione quem está presente,
-                    escolha o tamanho dos times e
-                    comece o primeiro jogo.
+                    Selecione os jogadores
+                    presentes.
                   </p>
                 </div>
 
                 <span className="present-count">
-                  {presentPlayers.length} presentes
+                  {
+                    presentPlayers.length
+                  }{" "}
+                  presentes
                 </span>
 
               </div>
 
               {/* =================================================
-                  TAMANHO DOS TIMES
+                  JOGADORES POR TIME
               ================================================= */}
 
               <div className="players-per-team-box">
 
                 <div>
+
                   <b>
                     Jogadores por time
                   </b>
 
                   <small>
-                    {playersPerTeam * 2} jogam por vez
+                    O sistema criará quantos
+                    times forem necessários.
                   </small>
+
                 </div>
 
                 <div className="number-control">
@@ -1392,15 +2022,14 @@ export default function Admin() {
                           )
                       )
                     }
-                    disabled={
-                      playersPerTeam <= 1
-                    }
                   >
                     <Minus size={17} />
                   </button>
 
                   <strong>
-                    {playersPerTeam}
+                    {
+                      playersPerTeam
+                    }
                   </strong>
 
                   <button
@@ -1423,172 +2052,214 @@ export default function Admin() {
               </div>
 
               {/* =================================================
-                  RESUMO
+                  DURAÇÃO
               ================================================= */}
 
-              <div className="team-size-summary">
+              <div className="players-per-team-box">
 
-                <span>
-                  🔵 Azul:{" "}
-                  <b>{playersPerTeam}</b>
-                </span>
+                <div>
 
-                <span>
-                  🔴 Vermelho:{" "}
-                  <b>{playersPerTeam}</b>
-                </span>
-
-                <span>
-                  🪑 Banco:{" "}
                   <b>
-                    {Math.max(
-                      0,
-                      presentPlayers.length -
-                        playersPerTeam * 2
-                    )}
+                    Duração da partida
                   </b>
-                </span>
+
+                  <small>
+                    Você poderá iniciar,
+                    pausar e finalizar o tempo.
+                  </small>
+
+                </div>
+
+                <div className="number-control">
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setGameDuration(
+                        (value) =>
+                          Math.max(
+                            1,
+                            value - 1
+                          )
+                      )
+                    }
+                  >
+                    <Minus size={17} />
+                  </button>
+
+                  <strong>
+                    {
+                      gameDuration
+                    }
+                    min
+                  </strong>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setGameDuration(
+                        (value) =>
+                          Math.min(
+                            120,
+                            value + 1
+                          )
+                      )
+                    }
+                  >
+                    <Plus size={17} />
+                  </button>
+
+                </div>
 
               </div>
 
               {/* =================================================
-                  JOGADORES
+                  PREVISÃO
               ================================================= */}
 
-              {players.length === 0 ? (
+              {presentPlayers.length >
+                0 && (
 
-                <div className="empty-box">
-
-                  <Users size={32} />
-
-                  <b>
-                    Nenhum jogador cadastrado
-                  </b>
+                <div className="team-size-summary">
 
                   <span>
-                    Adicione os jogadores antes
-                    de iniciar o racha.
+                    👥{" "}
+                    {
+                      presentPlayers.length
+                    }{" "}
+                    jogadores
+                  </span>
+
+                  <span>
+                    ⚽{" "}
+                    {Math.ceil(
+                      presentPlayers.length /
+                        playersPerTeam
+                    )}{" "}
+                    times
+                  </span>
+
+                  <span>
+                    ⏱️{" "}
+                    {
+                      gameDuration
+                    }{" "}
+                    min
                   </span>
 
                 </div>
-
-              ) : (
-
-                <>
-
-                  <div className="attendance-list">
-
-                    {players.map((player) => {
-
-                      const selected =
-                        presentPlayers.includes(
-                          player.id
-                        );
-
-                      return (
-                        <button
-                          key={player.id}
-                          type="button"
-                          className={`attendance-player ${
-                            selected
-                              ? "selected"
-                              : ""
-                          }`}
-                          onClick={() =>
-                            togglePresent(
-                              player.id
-                            )
-                          }
-                        >
-
-                          <div className="avatar">
-
-                            {player.photo_url ? (
-                              <img
-                                src={
-                                  player.photo_url
-                                }
-                                alt={
-                                  player.name
-                                }
-                              />
-                            ) : (
-                              player.name[0]?.toUpperCase()
-                            )}
-
-                          </div>
-
-                          <div className="attendance-info">
-
-                            <b>
-                              {player.name}
-                            </b>
-
-                            <small>
-                              Overall{" "}
-                              {player.overall}
-                            </small>
-
-                          </div>
-
-                          <div className="check">
-                            {selected
-                              ? "✓"
-                              : ""}
-                          </div>
-
-                        </button>
-                      );
-                    })}
-
-                  </div>
-
-                  {/* =================================================
-                      BOTÃO COMEÇAR
-                  ================================================= */}
-
-                  <div className="start-area">
-
-                    <button
-                      className="button start-button"
-                      type="button"
-                      onClick={
-                        startRacha
-                      }
-                      disabled={
-                        startingRacha ||
-                        presentPlayers.length <
-                          playersPerTeam * 2
-                      }
-                    >
-
-                      <Shuffle size={18} />
-
-                      {startingRacha
-                        ? "Sorteando..."
-                        : "Sortear times e iniciar"}
-
-                    </button>
-
-                    {presentPlayers.length <
-                      playersPerTeam * 2 && (
-                      <small className="muted">
-                        Selecione pelo menos{" "}
-                        {playersPerTeam * 2}{" "}
-                        jogadores.
-                      </small>
-                    )}
-
-                  </div>
-
-                </>
               )}
+
+              {/* =================================================
+                  PRESENÇA
+              ================================================= */}
+
+              <div className="attendance-list">
+
+                {players.map(
+                  (player) => {
+
+                    const selected =
+                      presentPlayers.includes(
+                        player.id
+                      );
+
+                    return (
+
+                      <button
+                        key={
+                          player.id
+                        }
+                        type="button"
+                        className={`attendance-player ${
+                          selected
+                            ? "selected"
+                            : ""
+                        }`}
+                        onClick={() =>
+                          togglePresent(
+                            player.id
+                          )
+                        }
+                      >
+
+                        <div className="avatar">
+
+                          {player.photo_url ? (
+                            <img
+                              src={
+                                player.photo_url
+                              }
+                              alt={
+                                player.name
+                              }
+                            />
+                          ) : (
+                            player.name[0]?.toUpperCase()
+                          )}
+
+                        </div>
+
+                        <div className="attendance-info">
+
+                          <b>
+                            {
+                              player.name
+                            }
+                          </b>
+
+                          <small>
+                            Overall{" "}
+                            {
+                              player.overall
+                            }
+                          </small>
+
+                        </div>
+
+                        <div className="check">
+                          {selected
+                            ? "✓"
+                            : ""}
+                        </div>
+
+                      </button>
+                    );
+                  }
+                )}
+
+              </div>
+
+              <div className="start-area">
+
+                <button
+                  className="button start-button"
+                  type="button"
+                  onClick={
+                    startRacha
+                  }
+                  disabled={
+                    startingRacha ||
+                    presentPlayers.length <
+                      2
+                  }
+                >
+
+                  <Shuffle size={18} />
+
+                  {startingRacha
+                    ? "Sorteando..."
+                    : "Sortear todos os times"}
+
+                </button>
+
+              </div>
 
             </div>
 
-            {/* ==================================================
-                CADASTRAR JOGADOR
-            ================================================== */}
+            {/* =================================================
+                ADICIONAR JOGADOR
+            ================================================= */}
 
             <div className="card">
 
@@ -1598,16 +2269,21 @@ export default function Admin() {
               </h2>
 
               <form
-                onSubmit={addPlayer}
+                onSubmit={
+                  addPlayer
+                }
                 className="inline"
               >
 
                 <input
                   placeholder="Nome do jogador"
-                  value={newPlayer}
+                  value={
+                    newPlayer
+                  }
                   onChange={(e) =>
                     setNewPlayer(
-                      e.target.value
+                      e.target
+                        .value
                     )
                   }
                 />
@@ -1626,14 +2302,9 @@ export default function Admin() {
 
         ) : (
 
-          /* ==================================================
-             RACHA EM ANDAMENTO
-          ================================================== */
-
           <>
-
             {/* =================================================
-                CABEÇALHO DO RACHA
+                CABEÇALHO RACHA
             ================================================= */}
 
             <div className="card">
@@ -1652,16 +2323,20 @@ export default function Admin() {
                   </h2>
 
                   <p className="muted">
-                    {presentPlayers.length}{" "}
-                    jogadores presentes ·{" "}
-                    {playersPerTeam} por time
+                    {
+                      presentPlayers.length
+                    }{" "}
+                    jogadores ·{" "}
+                    {
+                      playersPerTeam
+                    }{" "}
+                    por time
                   </p>
 
                 </div>
 
                 <button
                   className="finish-button"
-                  type="button"
                   onClick={
                     finishRacha
                   }
@@ -1670,50 +2345,50 @@ export default function Admin() {
                     !!currentGame
                   }
                 >
-                  <CheckCircle2 size={17} />
+                  <CheckCircle2
+                    size={17}
+                  />
 
-                  {finishingRacha
-                    ? "Encerrando..."
-                    : "Encerrar racha"}
+                  Encerrar racha
                 </button>
 
               </div>
 
               {/* =================================================
-                  HISTÓRICO DE JOGOS DO RACHA
+                  JOGOS
               ================================================= */}
 
-              {games.length > 0 && (
-                <div className="racha-games-list">
+              <div className="racha-games-list">
 
-                  {games.map((game) => {
+                {games.map(
+                  (game) => (
 
-                    const isCurrent =
-                      currentGame?.id ===
-                      game.id;
+                    <span
+                      key={
+                        game.id
+                      }
+                      className={
+                        currentGame?.id ===
+                        game.id
+                          ? "game-pill active"
+                          : "game-pill"
+                      }
+                    >
+                      Jogo{" "}
+                      {
+                        game.game_number
+                      }
 
-                    return (
-                      <span
-                        key={game.id}
-                        className={
-                          isCurrent
-                            ? "game-pill active"
-                            : "game-pill"
-                        }
-                      >
-                        Jogo{" "}
-                        {game.game_number}
+                      {game.status ===
+                      "finished"
+                        ? " ✓"
+                        : " • ao vivo"}
+                    </span>
 
-                        {game.status ===
-                          "finished"
-                          ? " ✓"
-                          : " • ao vivo"}
-                      </span>
-                    );
-                  })}
+                  )
+                )}
 
-                </div>
-              )}
+              </div>
 
             </div>
 
@@ -1726,49 +2401,166 @@ export default function Admin() {
               <>
 
                 {/* =================================================
+                    CRONÔMETRO
+                ================================================= */}
+
+                <div className="card timer-card">
+
+                  <div className="live-label">
+
+                    <Clock
+                      size={17}
+                    />
+
+                    JOGO{" "}
+                    {
+                      currentGame.game_number
+                    }
+
+                  </div>
+
+                  <div className="timer-display">
+
+                    {
+                      formatTime(
+                        Math.max(
+                          0,
+                          currentGame.duration_minutes *
+                            60 -
+                            timerSeconds
+                        )
+                      )
+                    }
+
+                  </div>
+
+                  <div className="timer-info">
+
+                    Duração:{" "}
+                    {
+                      currentGame.duration_minutes
+                    }{" "}
+                    minutos
+
+                  </div>
+
+                  <div className="timer-actions">
+
+                    {currentGame.timer_status !==
+                      "finished" && (
+
+                      <>
+                        {currentGame.timer_status ===
+                          "running" ? (
+
+                          <button
+                            className="button"
+                            type="button"
+                            onClick={
+                              pauseTimer
+                            }
+                          >
+                            <Pause
+                              size={17}
+                            />
+                            Pausar
+                          </button>
+
+                        ) : (
+
+                          <button
+                            className="button"
+                            type="button"
+                            onClick={
+                              startTimer
+                            }
+                          >
+                            <Play
+                              size={17}
+                            />
+
+                            {currentGame.timer_status ===
+                            "paused"
+                              ? "Continuar"
+                              : "Iniciar tempo"}
+                          </button>
+
+                        )}
+
+                        <button
+                          className="finish-button"
+                          type="button"
+                          onClick={
+                            finishTimer
+                          }
+                        >
+                          <Square
+                            size={16}
+                          />
+                          Finalizar tempo
+                        </button>
+
+                      </>
+                    )}
+
+                    {currentGame.timer_status ===
+                      "finished" && (
+
+                      <div className="goalkeeper-label">
+                        ⏱️ Tempo da partida
+                        finalizado
+                      </div>
+
+                    )}
+
+                  </div>
+
+                </div>
+
+                {/* =================================================
                     PLACAR
                 ================================================= */}
 
                 <div className="score-card">
 
-                  <div className="live-label">
-                    <span className="live-dot" />
-
-                    JOGO{" "}
-                    {currentGame.game_number}{" "}
-                    EM ANDAMENTO
-                  </div>
-
                   <div className="scoreboard">
 
-                    {teams.map((team) => (
+                    {teams.map(
+                      (team) => (
 
-                      <div
-                        className="score-team"
-                        key={team.id}
-                      >
-
-                        <span
-                          className="team-color"
-                          style={{
-                            backgroundColor:
-                              team.color,
-                          }}
-                        />
-
-                        <b>
-                          {team.name}
-                        </b>
-
-                        <strong>
-                          {getTeamScore(
+                        <div
+                          className="score-team"
+                          key={
                             team.id
-                          )}
-                        </strong>
+                          }
+                        >
 
-                      </div>
+                          <span
+                            className="team-color"
+                            style={{
+                              backgroundColor:
+                                team.color,
+                            }}
+                          />
 
-                    ))}
+                          <b>
+                            {
+                              team.name
+                            }
+                          </b>
+
+                          <strong>
+                            {
+                              getTeamScore(
+                                team.id
+                              )
+                            }
+                          </strong>
+
+                        </div>
+
+                      )
+                    )}
 
                   </div>
 
@@ -1776,18 +2568,21 @@ export default function Admin() {
 
                     <button
                       className="button goal-button"
-                      type="button"
                       onClick={
-                        openGoalForm
+                        () =>
+                          setShowGoalForm(
+                            true
+                          )
                       }
                     >
-                      <Plus size={18} />
+                      <Plus
+                        size={18}
+                      />
                       Registrar gol
                     </button>
 
                     <button
                       className="finish-button"
-                      type="button"
                       onClick={
                         finishGame
                       }
@@ -1799,9 +2594,7 @@ export default function Admin() {
                         size={17}
                       />
 
-                      {finishingGame
-                        ? "Finalizando..."
-                        : "Finalizar jogo"}
+                      Finalizar jogo
                     </button>
 
                   </div>
@@ -1809,31 +2602,17 @@ export default function Admin() {
                 </div>
 
                 {/* =================================================
-                    REGISTRAR GOL
+                    GOL
                 ================================================= */}
 
                 {showGoalForm && (
 
-                  <div className="card goal-form-card">
+                  <div className="card">
 
-                    <div className="section-title">
-
-                      <div>
-
-                        <h2>
-                          <Target />
-                          Registrar gol
-                        </h2>
-
-                        <p className="muted">
-                          Informe quem marcou
-                          e, se houver, a
-                          assistência.
-                        </p>
-
-                      </div>
-
-                    </div>
+                    <h2>
+                      <Target />
+                      Registrar gol
+                    </h2>
 
                     <form
                       onSubmit={
@@ -1866,7 +2645,7 @@ export default function Admin() {
                           >
 
                             <option value="">
-                              Selecionar jogador
+                              Selecionar
                             </option>
 
                             {gamePlayers.map(
@@ -1880,22 +2659,18 @@ export default function Admin() {
                                 if (!player)
                                   return null;
 
-                                const team =
-                                  getPlayerTeam(
-                                    player.id
-                                  );
-
                                 return (
                                   <option
-                                    key={gp.id}
+                                    key={
+                                      gp.id
+                                    }
                                     value={
                                       player.id
                                     }
                                   >
-                                    {player.name}{" "}
-                                    —{" "}
-                                    {team?.name ||
-                                      "Sem time"}
+                                    {
+                                      player.name
+                                    }
                                   </option>
                                 );
                               }
@@ -1931,13 +2706,8 @@ export default function Admin() {
                               Sem assistência
                             </option>
 
-                            {gamePlayers
-                              .filter(
-                                (gp) =>
-                                  gp.player_id !==
-                                  goalForm.scorer
-                              )
-                              .map((gp) => {
+                            {gamePlayers.map(
+                              (gp) => {
 
                                 const player =
                                   getPlayer(
@@ -1949,15 +2719,20 @@ export default function Admin() {
 
                                 return (
                                   <option
-                                    key={gp.id}
+                                    key={
+                                      gp.id
+                                    }
                                     value={
                                       player.id
                                     }
                                   >
-                                    {player.name}
+                                    {
+                                      player.name
+                                    }
                                   </option>
                                 );
-                              })}
+                              }
+                            )}
 
                           </select>
 
@@ -1986,13 +2761,13 @@ export default function Admin() {
                             savingGoal
                           }
                         >
-
-                          <Target size={17} />
+                          <Target
+                            size={17}
+                          />
 
                           {savingGoal
                             ? "Salvando..."
                             : "Confirmar gol"}
-
                         </button>
 
                       </div>
@@ -2008,263 +2783,241 @@ export default function Admin() {
 
                 <div className="teams-grid">
 
-                  {teams.map((team) => {
+                  {teams.map(
+                    (team) => {
 
-                    const teamPlayers =
-                      gamePlayers.filter(
-                        (player) =>
-                          player.team_id ===
+                      const teamPlayers =
+                        gamePlayers.filter(
+                          (player) =>
+                            player.team_id ===
+                            team.id
+                        );
+
+                      const goalkeeper =
+                        getGoalkeeper(
                           team.id
-                      );
+                        );
 
-                    const goalkeeper =
-                      getGoalkeeper(
-                        team.id
-                      );
+                      return (
 
-                    return (
+                        <div
+                          className="card team-card"
+                          key={
+                            team.id
+                          }
+                        >
 
-                      <div
-                        className="card team-card"
-                        key={team.id}
-                      >
+                          <div className="team-header">
 
-                        <div className="team-header">
+                            <div>
 
-                          <div>
+                              <span
+                                className="team-color"
+                                style={{
+                                  backgroundColor:
+                                    team.color,
+                                }}
+                              />
 
-                            <span
-                              className="team-color"
-                              style={{
-                                backgroundColor:
-                                  team.color,
-                              }}
-                            />
+                              <h2>
+                                {
+                                  team.name
+                                }
+                              </h2>
 
-                            <h2>
-                              {team.name}
-                            </h2>
+                            </div>
+
+                            <strong className="team-score">
+                              {
+                                getTeamScore(
+                                  team.id
+                                )
+                              }
+                            </strong>
 
                           </div>
 
-                          <strong className="team-score">
-                            {getTeamScore(
-                              team.id
-                            )}
-                          </strong>
+                          <div className="team-players">
 
-                        </div>
+                            {teamPlayers.map(
+                              (gp) => {
 
-                        <div className="team-players">
+                                const player =
+                                  getPlayer(
+                                    gp.player_id
+                                  );
 
-                          {teamPlayers.map(
-                            (gp) => {
+                                if (!player)
+                                  return null;
 
-                              const player =
-                                getPlayer(
-                                  gp.player_id
-                                );
+                                return (
 
-                              if (!player)
-                                return null;
-
-                              const isGoalkeeper =
-                                gp.role ===
-                                "goalkeeper";
-
-                              return (
-
-                                <div
-                                  className="match-player"
-                                  key={gp.id}
-                                >
-
-                                  <div className="avatar">
-
-                                    {player.photo_url ? (
-                                      <img
-                                        src={
-                                          player.photo_url
-                                        }
-                                        alt={
-                                          player.name
-                                        }
-                                      />
-                                    ) : (
-                                      player.name[0]?.toUpperCase()
-                                    )}
-
-                                  </div>
-
-                                  <div className="match-player-info">
-
-                                    <b>
-                                      {player.name}
-                                    </b>
-
-                                    <small>
-
-                                      {isGoalkeeper
-                                        ? "🧤 Goleiro"
-                                        : `⚽ ${gp.goals} gols · 🎯 ${gp.assists} assist.`}
-
-                                    </small>
-
-                                    {isGoalkeeper && (
-                                      <small>
-                                        Sofreu{" "}
-                                        {
-                                          gp.goals_conceded
-                                        }{" "}
-                                        gol
-                                        {gp.goals_conceded !==
-                                        1
-                                          ? "s"
-                                          : ""}
-                                      </small>
-                                    )}
-
-                                  </div>
-
-                                  <button
-                                    type="button"
-                                    className={`goalkeeper-button ${
-                                      isGoalkeeper
-                                        ? "active"
-                                        : ""
-                                    }`}
-                                    title={
-                                      isGoalkeeper
-                                        ? "Remover como goleiro"
-                                        : "Definir como goleiro"
-                                    }
-                                    onClick={() =>
-                                      setGoalkeeper(
-                                        gp.id,
-                                        team.id
-                                      )
+                                  <div
+                                    className="match-player"
+                                    key={
+                                      gp.id
                                     }
                                   >
-                                    <Shield
-                                      size={16}
-                                    />
-                                  </button>
 
-                                </div>
-                              );
-                            }
+                                    <div className="avatar">
+
+                                      {player.photo_url ? (
+                                        <img
+                                          src={
+                                            player.photo_url
+                                          }
+                                          alt={
+                                            player.name
+                                          }
+                                        />
+                                      ) : (
+                                        player.name[0]?.toUpperCase()
+                                      )}
+
+                                    </div>
+
+                                    <div className="match-player-info">
+
+                                      <b>
+                                        {
+                                          player.name
+                                        }
+                                      </b>
+
+                                      <small>
+
+                                        {gp.role ===
+                                        "goalkeeper"
+                                          ? "🧤 Goleiro"
+                                          : `⚽ ${gp.goals} · 🎯 ${gp.assists}`}
+
+                                      </small>
+
+                                    </div>
+
+                                    {/* =================================
+                                        MOVER DE TIME
+                                    ================================= */}
+
+                                    <select
+                                      value={
+                                        team.id
+                                      }
+                                      onChange={(e) =>
+                                        movePlayer(
+                                          gp.id,
+                                          e.target
+                                            .value
+                                        )
+                                      }
+                                      title="Mover jogador"
+                                    >
+
+                                      <option
+                                        value={
+                                          team.id
+                                        }
+                                      >
+                                        {
+                                          team.name
+                                        }
+                                      </option>
+
+                                      {teams
+                                        .filter(
+                                          (
+                                            otherTeam
+                                          ) =>
+                                            otherTeam.id !==
+                                            team.id
+                                        )
+                                        .map(
+                                          (
+                                            otherTeam
+                                          ) => (
+                                            <option
+                                              key={
+                                                otherTeam.id
+                                              }
+                                              value={
+                                                otherTeam.id
+                                              }
+                                            >
+                                              →
+                                              {
+                                                otherTeam.name
+                                              }
+                                            </option>
+                                          )
+                                        )}
+
+                                    </select>
+
+                                    {/* =================================
+                                        GOLEIRO
+                                    ================================= */}
+
+                                    <button
+                                      type="button"
+                                      className={`goalkeeper-button ${
+                                        gp.role ===
+                                        "goalkeeper"
+                                          ? "active"
+                                          : ""
+                                      }`}
+                                      onClick={() =>
+                                        setGoalkeeper(
+                                          gp.id,
+                                          team.id
+                                        )
+                                      }
+                                    >
+                                      <Shield
+                                        size={16}
+                                      />
+                                    </button>
+
+                                  </div>
+
+                                );
+                              }
+                            )}
+
+                          </div>
+
+                          {goalkeeper && (
+
+                            <div className="goalkeeper-label">
+
+                              🧤 Goleiro:{" "}
+
+                              <b>
+                                {
+                                  getPlayer(
+                                    goalkeeper.player_id
+                                  )?.name
+                                }
+                              </b>
+
+                              {" · "}
+                              Sofreu{" "}
+                              {
+                                goalkeeper.goals_conceded
+                              }
+
+                            </div>
+
                           )}
 
                         </div>
-
-                        {goalkeeper && (
-
-                          <div className="goalkeeper-label">
-
-                            🧤 Goleiro atual:{" "}
-
-                            <b>
-                              {
-                                getPlayer(
-                                  goalkeeper.player_id
-                                )?.name
-                              }
-                            </b>
-
-                          </div>
-                        )}
-
-                      </div>
-                    );
-                  })}
+                      );
+                    }
+                  )}
 
                 </div>
 
                 {/* =================================================
-                    BANCO
-                ================================================= */}
-
-                {getBenchPlayers().length >
-                  0 && (
-
-                  <div className="card bench-card">
-
-                    <div className="section-title">
-
-                      <div>
-
-                        <h2>
-                          🪑 Banco
-                        </h2>
-
-                        <p className="muted">
-                          Jogadores presentes
-                          que não estão neste
-                          jogo.
-                        </p>
-
-                      </div>
-
-                      <span className="present-count">
-                        {
-                          getBenchPlayers()
-                            .length
-                        }
-                      </span>
-
-                    </div>
-
-                    <div className="attendance-list">
-
-                      {getBenchPlayers().map(
-                        (player) => (
-
-                          <div
-                            className="attendance-player"
-                            key={player.id}
-                          >
-
-                            <div className="avatar">
-
-                              {player.photo_url ? (
-                                <img
-                                  src={
-                                    player.photo_url
-                                  }
-                                  alt={
-                                    player.name
-                                  }
-                                />
-                              ) : (
-                                player.name[0]?.toUpperCase()
-                              )}
-
-                            </div>
-
-                            <div className="attendance-info">
-
-                              <b>
-                                {player.name}
-                              </b>
-
-                              <small>
-                                Overall{" "}
-                                {player.overall}
-                              </small>
-
-                            </div>
-
-                          </div>
-                        )
-                      )}
-
-                    </div>
-
-                  </div>
-                )}
-
-                {/* =================================================
-                    RESUMO DO JOGO
+                    ESTATÍSTICAS
                 ================================================= */}
 
                 <div className="stats">
@@ -2294,7 +3047,8 @@ export default function Admin() {
                         } — ${
                           top.goals
                         } gol${
-                          top.goals !== 1
+                          top.goals !==
+                          1
                             ? "s"
                             : ""
                         }`;
@@ -2353,21 +3107,78 @@ export default function Admin() {
 
                   <div className="empty-box">
 
-                    <CheckCircle2 size={38} />
+                    <CheckCircle2
+                      size={38}
+                    />
 
                     <b>
-                      Jogo{" "}
-                      {games.length > 0
-                        ? games.length
-                        : 1}{" "}
-                      finalizado
+                      Jogo finalizado
                     </b>
 
                     <span>
-                      O resultado foi salvo.
-                      Agora você pode iniciar
-                      o próximo jogo.
+                      O resultado foi
+                      salvo. Escolha
+                      a duração e
+                      inicie o próximo
+                      jogo.
                     </span>
+
+                    <div className="players-per-team-box">
+
+                      <div>
+
+                        <b>
+                          Duração do próximo jogo
+                        </b>
+
+                      </div>
+
+                      <div className="number-control">
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setGameDuration(
+                              (value) =>
+                                Math.max(
+                                  1,
+                                  value - 1
+                                )
+                            )
+                          }
+                        >
+                          <Minus
+                            size={17}
+                          />
+                        </button>
+
+                        <strong>
+                          {
+                            gameDuration
+                          }
+                          min
+                        </strong>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setGameDuration(
+                              (value) =>
+                                Math.min(
+                                  120,
+                                  value + 1
+                                )
+                            )
+                          }
+                        >
+                          <Plus
+                            size={17}
+                          />
+                        </button>
+
+                      </div>
+
+                    </div>
 
                     <button
                       className="button"
@@ -2378,39 +3189,33 @@ export default function Admin() {
                       disabled={
                         startingGame ||
                         presentPlayers.length <
-                          playersPerTeam * 2
+                          2
                       }
                     >
 
-                      <Play size={18} />
+                      <Shuffle
+                        size={18}
+                      />
 
                       {startingGame
                         ? "Sorteando..."
-                        : `Iniciar jogo ${
-                            games.length + 1
+                        : `Sortear jogo ${
+                            games.length +
+                            1
                           }`}
 
                     </button>
-
-                    {presentPlayers.length <
-                      playersPerTeam * 2 && (
-                      <small className="muted">
-                        São necessários pelo
-                        menos{" "}
-                        {playersPerTeam * 2}{" "}
-                        jogadores presentes.
-                      </small>
-                    )}
 
                   </div>
 
                 </div>
 
                 {/* =================================================
-                    HISTÓRICO DOS JOGOS
+                    HISTÓRICO
                 ================================================= */}
 
-                {games.length > 0 && (
+                {games.length >
+                  0 && (
 
                   <div className="card">
 
@@ -2426,10 +3231,13 @@ export default function Admin() {
 
                           <div
                             className="game-history-item"
-                            key={game.id}
+                            key={
+                              game.id
+                            }
                           >
 
                             <div>
+
                               <b>
                                 Jogo{" "}
                                 {
@@ -2438,11 +3246,16 @@ export default function Admin() {
                               </b>
 
                               <small>
+                                {
+                                  game.duration_minutes
+                                }{" "}
+                                minutos ·{" "}
                                 {game.status ===
                                 "finished"
                                   ? "Finalizado"
                                   : "Em andamento"}
                               </small>
+
                             </div>
 
                             <CheckCircle2
@@ -2450,6 +3263,7 @@ export default function Admin() {
                             />
 
                           </div>
+
                         )
                       )}
 
@@ -2474,6 +3288,8 @@ export default function Admin() {
 
   async function logout() {
     await supabase.auth.signOut();
-    location.href = "/admin/login";
+
+    location.href =
+      "/admin/login";
   }
 }
