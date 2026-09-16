@@ -32,23 +32,33 @@ type Player = {
   conceded: number;
 };
 
-type Match = {
+type Racha = {
   id: string;
   group_id: string;
   played_on: string;
   status: "open" | "finished";
+  players_per_team: number;
+  created_at: string;
+};
+
+type Game = {
+  id: string;
+  racha_id: string;
+  game_number: number;
+  status: "open" | "finished";
+  created_at: string;
 };
 
 type Team = {
   id: string;
-  match_id: string;
+  game_id: string;
   name: string;
   color: string;
 };
 
-type MatchPlayer = {
+type GamePlayer = {
   id: string;
-  match_id: string;
+  game_id: string;
   team_id: string | null;
   player_id: string;
   role: "field" | "goalkeeper";
@@ -59,6 +69,13 @@ type MatchPlayer = {
   left_at: string | null;
 };
 
+type Attendance = {
+  id: string;
+  racha_id: string;
+  player_id: string;
+  present: boolean;
+};
+
 type GoalForm = {
   scorer: string;
   assist: string;
@@ -67,9 +84,9 @@ type GoalForm = {
 export default function Admin() {
   const supabase = createClient();
 
-  // =========================
+  // =========================================================
   // ESTADO GERAL
-  // =========================
+  // =========================================================
 
   const [groups, setGroups] = useState<Group[]>([]);
   const [groupId, setGroupId] = useState("");
@@ -81,25 +98,35 @@ export default function Admin() {
 
   const [loading, setLoading] = useState(true);
   const [loadingPlayers, setLoadingPlayers] = useState(false);
+  const [loadingRacha, setLoadingRacha] = useState(false);
 
-  // =========================
+  // =========================================================
   // RACHA
-  // =========================
+  // =========================================================
 
-  const [match, setMatch] = useState<Match | null>(null);
+  const [racha, setRacha] = useState<Racha | null>(null);
+  const [games, setGames] = useState<Game[]>([]);
+  const [currentGame, setCurrentGame] = useState<Game | null>(null);
+
   const [teams, setTeams] = useState<Team[]>([]);
-  const [matchPlayers, setMatchPlayers] = useState<MatchPlayer[]>([]);
+  const [gamePlayers, setGamePlayers] = useState<GamePlayer[]>([]);
 
+  const [attendance, setAttendance] = useState<Attendance[]>([]);
   const [presentPlayers, setPresentPlayers] = useState<string[]>([]);
 
-  const [loadingMatch, setLoadingMatch] = useState(false);
-  const [startingMatch, setStartingMatch] = useState(false);
+  const [playersPerTeam, setPlayersPerTeam] = useState(5);
 
-  // =========================
+  const [startingRacha, setStartingRacha] = useState(false);
+  const [startingGame, setStartingGame] = useState(false);
+  const [finishingGame, setFinishingGame] = useState(false);
+  const [finishingRacha, setFinishingRacha] = useState(false);
+
+  // =========================================================
   // GOL
-  // =========================
+  // =========================================================
 
   const [showGoalForm, setShowGoalForm] = useState(false);
+
   const [goalForm, setGoalForm] = useState<GoalForm>({
     scorer: "",
     assist: "",
@@ -107,9 +134,23 @@ export default function Admin() {
 
   const [savingGoal, setSavingGoal] = useState(false);
 
-  // =========================
+  // =========================================================
+  // DATA
+  // =========================================================
+
+  function getToday() {
+    const now = new Date();
+
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+  }
+
+  // =========================================================
   // CARREGAR GRUPOS
-  // =========================
+  // =========================================================
 
   async function loadGroups() {
     const {
@@ -144,9 +185,9 @@ export default function Admin() {
     setLoading(false);
   }
 
-  // =========================
+  // =========================================================
   // CARREGAR JOGADORES
-  // =========================
+  // =========================================================
 
   async function loadPlayers(id: string) {
     if (!id) {
@@ -172,38 +213,32 @@ export default function Admin() {
     setLoadingPlayers(false);
   }
 
-  // =========================
-  // DATA LOCAL
-  // =========================
-
-  function getToday() {
-    const now = new Date();
-
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, "0");
-    const day = String(now.getDate()).padStart(2, "0");
-
-    return `${year}-${month}-${day}`;
-  }
-
-  // =========================
+  // =========================================================
   // CARREGAR RACHA DE HOJE
-  // =========================
+  // =========================================================
 
-  async function loadTodayMatch(id: string) {
+  async function loadTodayRacha(id: string) {
     if (!id) {
-      setMatch(null);
+      setRacha(null);
+      setGames([]);
+      setCurrentGame(null);
       setTeams([]);
-      setMatchPlayers([]);
+      setGamePlayers([]);
+      setAttendance([]);
+      setPresentPlayers([]);
       return;
     }
 
-    setLoadingMatch(true);
+    setLoadingRacha(true);
 
     const today = getToday();
 
-    const { data: existingMatch, error: matchError } = await supabase
-      .from("matches")
+    // -------------------------------------------------------
+    // RACHA
+    // -------------------------------------------------------
+
+    const { data: existingRacha, error: rachaError } = await supabase
+      .from("rachas")
       .select("*")
       .eq("group_id", id)
       .eq("played_on", today)
@@ -212,75 +247,145 @@ export default function Admin() {
       .limit(1)
       .maybeSingle();
 
-    if (matchError) {
-      console.error("Erro ao carregar racha:", matchError);
-      setLoadingMatch(false);
+    if (rachaError) {
+      console.error("Erro ao carregar racha:", rachaError);
+      setLoadingRacha(false);
       return;
     }
 
-    if (!existingMatch) {
-      setMatch(null);
+    if (!existingRacha) {
+      setRacha(null);
+      setGames([]);
+      setCurrentGame(null);
       setTeams([]);
-      setMatchPlayers([]);
-      setLoadingMatch(false);
+      setGamePlayers([]);
+      setAttendance([]);
+      setPresentPlayers([]);
+      setLoadingRacha(false);
       return;
     }
 
-    setMatch(existingMatch);
+    setRacha(existingRacha);
+    setPlayersPerTeam(existingRacha.players_per_team);
+
+    // -------------------------------------------------------
+    // PRESENÇA
+    // -------------------------------------------------------
+
+    const { data: loadedAttendance, error: attendanceError } =
+      await supabase
+        .from("racha_attendance")
+        .select("*")
+        .eq("racha_id", existingRacha.id);
+
+    if (attendanceError) {
+      console.error("Erro ao carregar presença:", attendanceError);
+    }
+
+    const attendanceData = loadedAttendance || [];
+
+    setAttendance(attendanceData);
+
+    setPresentPlayers(
+      attendanceData
+        .filter((item: Attendance) => item.present)
+        .map((item: Attendance) => item.player_id)
+    );
+
+    // -------------------------------------------------------
+    // JOGOS
+    // -------------------------------------------------------
+
+    const { data: loadedGames, error: gamesError } = await supabase
+      .from("racha_games")
+      .select("*")
+      .eq("racha_id", existingRacha.id)
+      .order("game_number", { ascending: true });
+
+    if (gamesError) {
+      console.error("Erro ao carregar jogos:", gamesError);
+      setGames([]);
+      setCurrentGame(null);
+      setLoadingRacha(false);
+      return;
+    }
+
+    const gameData = loadedGames || [];
+
+    setGames(gameData);
+
+    // Procura jogo aberto
+    const openGame =
+      gameData.find((game: Game) => game.status === "open") || null;
+
+    if (!openGame) {
+      setCurrentGame(null);
+      setTeams([]);
+      setGamePlayers([]);
+      setLoadingRacha(false);
+      return;
+    }
+
+    setCurrentGame(openGame);
+
+    // -------------------------------------------------------
+    // TIMES
+    // -------------------------------------------------------
 
     const { data: loadedTeams, error: teamsError } = await supabase
-      .from("teams")
+      .from("racha_teams")
       .select("*")
-      .eq("match_id", existingMatch.id);
+      .eq("game_id", openGame.id);
 
     if (teamsError) {
       console.error("Erro ao carregar times:", teamsError);
     }
 
-    const { data: loadedMatchPlayers, error: playersError } =
-      await supabase
-        .from("match_players")
-        .select("*")
-        .eq("match_id", existingMatch.id);
+    // -------------------------------------------------------
+    // JOGADORES DO JOGO
+    // -------------------------------------------------------
 
-    if (playersError) {
-      console.error("Erro ao carregar jogadores do racha:", playersError);
+    const { data: loadedGamePlayers, error: gamePlayersError } =
+      await supabase
+        .from("racha_game_players")
+        .select("*")
+        .eq("game_id", openGame.id);
+
+    if (gamePlayersError) {
+      console.error(
+        "Erro ao carregar jogadores do jogo:",
+        gamePlayersError
+      );
     }
 
     setTeams(loadedTeams || []);
-    setMatchPlayers(loadedMatchPlayers || []);
+    setGamePlayers(loadedGamePlayers || []);
 
-    setPresentPlayers(
-      (loadedMatchPlayers || []).map(
-        (player: MatchPlayer) => player.player_id
-      )
-    );
-
-    setLoadingMatch(false);
+    setLoadingRacha(false);
   }
 
-  // =========================
+  // =========================================================
   // LOAD INICIAL
-  // =========================
+  // =========================================================
 
   useEffect(() => {
     loadGroups();
   }, []);
 
-  // =========================
+  // =========================================================
   // TROCA DE GRUPO
-  // =========================
+  // =========================================================
 
   useEffect(() => {
     if (!groupId) return;
 
     loadPlayers(groupId);
-    loadTodayMatch(groupId);
+    loadTodayRacha(groupId);
   }, [groupId]);
 
-  // =========================
+  // =========================================================
   // CRIAR GRUPO
-  // =========================
+  // =========================================================
 
   async function addGroup(e: React.FormEvent) {
     e.preventDefault();
@@ -318,13 +423,13 @@ export default function Admin() {
       setGroupId(data.id);
 
       await loadPlayers(data.id);
-      await loadTodayMatch(data.id);
+      await loadTodayRacha(data.id);
     }
   }
 
-  // =========================
+  // =========================================================
   // ADICIONAR JOGADOR
-  // =========================
+  // =========================================================
 
   async function addPlayer(e: React.FormEvent) {
     e.preventDefault();
@@ -349,12 +454,12 @@ export default function Admin() {
     await loadPlayers(groupId);
   }
 
-  // =========================
+  // =========================================================
   // SELECIONAR PRESENTE
-  // =========================
+  // =========================================================
 
   function togglePresent(playerId: string) {
-    if (match) return;
+    if (racha) return;
 
     setPresentPlayers((current) => {
       if (current.includes(playerId)) {
@@ -365,9 +470,9 @@ export default function Admin() {
     });
   }
 
-  // =========================
-  // SORTEAR TIMES
-  // =========================
+  // =========================================================
+  // SORTEAR
+  // =========================================================
 
   function shufflePlayers(list: Player[]) {
     const shuffled = [...list];
@@ -381,55 +486,148 @@ export default function Admin() {
     return shuffled;
   }
 
-  // =========================
+  // =========================================================
   // INICIAR RACHA
-  // =========================
+  // =========================================================
 
-  async function startMatch() {
+  async function startRacha() {
     if (!groupId) return;
 
-    if (presentPlayers.length < 2) {
-      alert("Selecione pelo menos 2 jogadores.");
+    if (presentPlayers.length < playersPerTeam * 2) {
+      alert(
+        `São necessários pelo menos ${
+          playersPerTeam * 2
+        } jogadores presentes para jogar com ${playersPerTeam} por time.`
+      );
       return;
     }
 
-    setStartingMatch(true);
+    setStartingRacha(true);
 
     try {
-      // --------------------------------
-      // 1. CRIAR PARTIDA
-      // --------------------------------
+      // -----------------------------------------------------
+      // 1. CRIAR RACHA
+      // -----------------------------------------------------
 
-      const { data: newMatch, error: matchError } = await supabase
-        .from("matches")
+      const { data: newRacha, error: rachaError } = await supabase
+        .from("rachas")
         .insert({
           group_id: groupId,
           played_on: getToday(),
+          status: "open",
+          players_per_team: playersPerTeam,
+        })
+        .select()
+        .single();
+
+      if (rachaError || !newRacha) {
+        console.error("Erro ao criar racha:", rachaError);
+        alert("Não foi possível criar o racha.");
+        return;
+      }
+
+      // -----------------------------------------------------
+      // 2. REGISTRAR PRESENÇA
+      // -----------------------------------------------------
+
+      const attendanceRows = presentPlayers.map((playerId) => ({
+        racha_id: newRacha.id,
+        player_id: playerId,
+        present: true,
+      }));
+
+      const { error: attendanceError } = await supabase
+        .from("racha_attendance")
+        .insert(attendanceRows);
+
+      if (attendanceError) {
+        console.error(
+          "Erro ao registrar presença:",
+          attendanceError
+        );
+
+        await supabase
+          .from("rachas")
+          .delete()
+          .eq("id", newRacha.id);
+
+        alert("Não foi possível registrar a presença.");
+        return;
+      }
+
+      setRacha(newRacha);
+      setAttendance(
+        attendanceRows.map((item) => ({
+          ...item,
+          id: "",
+        }))
+      );
+
+      // -----------------------------------------------------
+      // 3. CRIAR PRIMEIRO JOGO
+      // -----------------------------------------------------
+
+      await createGame(newRacha.id, 1, presentPlayers);
+    } finally {
+      setStartingRacha(false);
+    }
+  }
+
+  // =========================================================
+  // CRIAR JOGO
+  // =========================================================
+
+  async function createGame(
+    rachaId: string,
+    gameNumber: number,
+    playerIds: string[]
+  ) {
+    if (playerIds.length < playersPerTeam * 2) {
+      alert(
+        `Não há jogadores suficientes para criar o jogo. São necessários pelo menos ${
+          playersPerTeam * 2
+        }.`
+      );
+      return false;
+    }
+
+    setStartingGame(true);
+
+    try {
+      // -----------------------------------------------------
+      // JOGO
+      // -----------------------------------------------------
+
+      const { data: newGame, error: gameError } = await supabase
+        .from("racha_games")
+        .insert({
+          racha_id: rachaId,
+          game_number: gameNumber,
           status: "open",
         })
         .select()
         .single();
 
-      if (matchError || !newMatch) {
-        console.error("Erro ao criar partida:", matchError);
-        alert("Não foi possível criar o racha.");
-        return;
+      if (gameError || !newGame) {
+        console.error("Erro ao criar jogo:", gameError);
+        alert("Não foi possível criar o jogo.");
+        return false;
       }
 
-      // --------------------------------
-      // 2. CRIAR TIMES
-      // --------------------------------
+      // -----------------------------------------------------
+      // TIMES
+      // -----------------------------------------------------
 
       const { data: newTeams, error: teamsError } = await supabase
-        .from("teams")
+        .from("racha_teams")
         .insert([
           {
-            match_id: newMatch.id,
+            game_id: newGame.id,
             name: "Time Azul",
             color: "#2563eb",
           },
           {
-            match_id: newMatch.id,
+            game_id: newGame.id,
             name: "Time Vermelho",
             color: "#dc2626",
           },
@@ -439,10 +637,13 @@ export default function Admin() {
       if (teamsError || !newTeams || newTeams.length !== 2) {
         console.error("Erro ao criar times:", teamsError);
 
-        await supabase.from("matches").delete().eq("id", newMatch.id);
+        await supabase
+          .from("racha_games")
+          .delete()
+          .eq("id", newGame.id);
 
         alert("Não foi possível criar os times.");
-        return;
+        return false;
       }
 
       const blueTeam = newTeams.find(
@@ -455,162 +656,210 @@ export default function Admin() {
 
       if (!blueTeam || !redTeam) {
         alert("Erro ao identificar os times.");
-        return;
+        return false;
       }
 
-      // --------------------------------
-      // 3. SORTEAR JOGADORES
-      // --------------------------------
+      // -----------------------------------------------------
+      // SORTEIO
+      // -----------------------------------------------------
 
       const selectedPlayers = players.filter((player) =>
-        presentPlayers.includes(player.id)
+        playerIds.includes(player.id)
       );
 
       const shuffled = shufflePlayers(selectedPlayers);
 
-      const half = Math.ceil(shuffled.length / 2);
+      const totalPlayers = playersPerTeam * 2;
 
-      const bluePlayers = shuffled.slice(0, half);
-      const redPlayers = shuffled.slice(half);
+      const playingPlayers = shuffled.slice(0, totalPlayers);
 
-      // --------------------------------
-      // 4. REGISTRAR PRESENÇA
-      // --------------------------------
+      const bluePlayers = playingPlayers.slice(
+        0,
+        playersPerTeam
+      );
 
-      const attendanceRows = selectedPlayers.map((player) => ({
-        match_id: newMatch.id,
-        player_id: player.id,
-        present: true,
-      }));
+      const redPlayers = playingPlayers.slice(
+        playersPerTeam,
+        totalPlayers
+      );
 
-      const { error: attendanceError } = await supabase
-        .from("player_attendance")
-        .insert(attendanceRows);
+      // -----------------------------------------------------
+      // JOGADORES DO JOGO
+      // -----------------------------------------------------
 
-      if (attendanceError) {
-        console.error("Erro ao registrar presença:", attendanceError);
-      }
-
-      // --------------------------------
-      // 5. REGISTRAR JOGADORES DOS TIMES
-      // --------------------------------
-
-      const matchPlayerRows = [
+      const gamePlayerRows = [
         ...bluePlayers.map((player) => ({
-          match_id: newMatch.id,
+          game_id: newGame.id,
           team_id: blueTeam.id,
           player_id: player.id,
           role: "field" as const,
         })),
 
         ...redPlayers.map((player) => ({
-          match_id: newMatch.id,
+          game_id: newGame.id,
           team_id: redTeam.id,
           player_id: player.id,
           role: "field" as const,
         })),
       ];
 
-      const { data: createdMatchPlayers, error: matchPlayersError } =
-        await supabase
-          .from("match_players")
-          .insert(matchPlayerRows)
-          .select();
+      const {
+        data: createdGamePlayers,
+        error: gamePlayersError,
+      } = await supabase
+        .from("racha_game_players")
+        .insert(gamePlayerRows)
+        .select();
 
-      if (matchPlayersError) {
+      if (gamePlayersError) {
         console.error(
           "Erro ao registrar jogadores:",
-          matchPlayersError
+          gamePlayersError
         );
 
-        await supabase.from("matches").delete().eq("id", newMatch.id);
+        await supabase
+          .from("racha_games")
+          .delete()
+          .eq("id", newGame.id);
 
         alert("Não foi possível montar os times.");
-        return;
+        return false;
       }
 
-      setMatch(newMatch);
+      setCurrentGame(newGame);
+
+      setGames((current) => [...current, newGame]);
+
       setTeams(newTeams);
-      setMatchPlayers(createdMatchPlayers || []);
+
+      setGamePlayers(createdGamePlayers || []);
+
+      return true;
     } finally {
-      setStartingMatch(false);
+      setStartingGame(false);
     }
   }
 
-  // =========================
+  // =========================================================
+  // INICIAR PRÓXIMO JOGO
+  // =========================================================
+
+  async function startNextGame() {
+    if (!racha) return;
+
+    if (presentPlayers.length < playersPerTeam * 2) {
+      alert(
+        `São necessários pelo menos ${
+          playersPerTeam * 2
+        } jogadores presentes para iniciar outro jogo.`
+      );
+      return;
+    }
+
+    const nextNumber =
+      games.length > 0
+        ? Math.max(...games.map((game) => game.game_number)) + 1
+        : 1;
+
+    await createGame(
+      racha.id,
+      nextNumber,
+      presentPlayers
+    );
+
+    await loadTodayRacha(groupId);
+  }
+
+  // =========================================================
   // ENCONTRAR JOGADOR
-  // =========================
+  // =========================================================
 
   function getPlayer(playerId: string) {
     return players.find((player) => player.id === playerId);
   }
 
-  // =========================
-  // ENCONTRAR JOGADOR DA PARTIDA
-  // =========================
+  // =========================================================
+  // ENCONTRAR JOGADOR DO JOGO
+  // =========================================================
 
-  function getMatchPlayer(playerId: string) {
-    return matchPlayers.find(
+  function getGamePlayer(playerId: string) {
+    return gamePlayers.find(
       (player) => player.player_id === playerId
     );
   }
 
-  // =========================
+  // =========================================================
   // TIME DO JOGADOR
-  // =========================
+  // =========================================================
 
   function getPlayerTeam(playerId: string) {
-    const mp = getMatchPlayer(playerId);
+    const gp = getGamePlayer(playerId);
 
-    if (!mp) return null;
+    if (!gp) return null;
 
-    return teams.find((team) => team.id === mp.team_id) || null;
+    return (
+      teams.find((team) => team.id === gp.team_id) || null
+    );
   }
 
-  // =========================
+  // =========================================================
   // PLACAR
-  // =========================
+  // =========================================================
 
   function getTeamScore(teamId: string) {
-    return matchPlayers
+    return gamePlayers
       .filter((player) => player.team_id === teamId)
-      .reduce((total, player) => total + player.goals, 0);
+      .reduce(
+        (total, player) => total + player.goals,
+        0
+      );
   }
 
-  // =========================
+  // =========================================================
   // GOLEIRO
-  // =========================
+  // =========================================================
 
   function getGoalkeeper(teamId: string) {
-    return matchPlayers.find(
+    return gamePlayers.find(
       (player) =>
         player.team_id === teamId &&
         player.role === "goalkeeper"
     );
   }
 
-  // =========================
+  // =========================================================
   // DEFINIR GOLEIRO
-  // =========================
+  // =========================================================
 
   async function setGoalkeeper(
-    matchPlayerId: string,
+    gamePlayerId: string,
     teamId: string
   ) {
-    if (!match) return;
+    if (!currentGame) return;
 
     const currentGoalkeeper = getGoalkeeper(teamId);
 
-    // Se já existe goleiro, volta para jogador de linha.
-    if (currentGoalkeeper && currentGoalkeeper.id !== matchPlayerId) {
-      await supabase
-        .from("match_players")
+    // Remove goleiro anterior
+    if (
+      currentGoalkeeper &&
+      currentGoalkeeper.id !== gamePlayerId
+    ) {
+      const { error } = await supabase
+        .from("racha_game_players")
         .update({
           role: "field",
         })
         .eq("id", currentGoalkeeper.id);
 
-      setMatchPlayers((current) =>
+      if (error) {
+        console.error(
+          "Erro ao remover goleiro:",
+          error
+        );
+        return;
+      }
+
+      setGamePlayers((current) =>
         current.map((player) =>
           player.id === currentGoalkeeper.id
             ? {
@@ -622,21 +871,64 @@ export default function Admin() {
       );
     }
 
-    const { error } = await supabase
-      .from("match_players")
-      .update({
-        role: "goalkeeper",
-      })
-      .eq("id", matchPlayerId);
+    const selected = gamePlayers.find(
+      (player) => player.id === gamePlayerId
+    );
 
-    if (error) {
-      console.error("Erro ao definir goleiro:", error);
+    if (!selected) return;
+
+    // Se clicar no goleiro atual, transforma em jogador de linha
+    if (
+      selected.role === "goalkeeper" &&
+      currentGoalkeeper?.id === gamePlayerId
+    ) {
+      const { error } = await supabase
+        .from("racha_game_players")
+        .update({
+          role: "field",
+        })
+        .eq("id", gamePlayerId);
+
+      if (error) {
+        console.error(
+          "Erro ao remover goleiro:",
+          error
+        );
+        return;
+      }
+
+      setGamePlayers((current) =>
+        current.map((player) =>
+          player.id === gamePlayerId
+            ? {
+                ...player,
+                role: "field",
+              }
+            : player
+        )
+      );
+
       return;
     }
 
-    setMatchPlayers((current) =>
+    const { error } = await supabase
+      .from("racha_game_players")
+      .update({
+        role: "goalkeeper",
+      })
+      .eq("id", gamePlayerId);
+
+    if (error) {
+      console.error(
+        "Erro ao definir goleiro:",
+        error
+      );
+      return;
+    }
+
+    setGamePlayers((current) =>
       current.map((player) =>
-        player.id === matchPlayerId
+        player.id === gamePlayerId
           ? {
               ...player,
               role: "goalkeeper",
@@ -646,9 +938,9 @@ export default function Admin() {
     );
   }
 
-  // =========================
+  // =========================================================
   // ABRIR REGISTRO DE GOL
-  // =========================
+  // =========================================================
 
   function openGoalForm() {
     setGoalForm({
@@ -659,14 +951,14 @@ export default function Admin() {
     setShowGoalForm(true);
   }
 
-  // =========================
+  // =========================================================
   // REGISTRAR GOL
-  // =========================
+  // =========================================================
 
   async function registerGoal(e: React.FormEvent) {
     e.preventDefault();
 
-    if (!match) return;
+    if (!currentGame) return;
 
     if (!goalForm.scorer) {
       alert("Selecione quem fez o gol.");
@@ -676,75 +968,92 @@ export default function Admin() {
     setSavingGoal(true);
 
     try {
-      const scorer = getMatchPlayer(goalForm.scorer);
+      const scorer = getGamePlayer(goalForm.scorer);
 
       if (!scorer || !scorer.team_id) {
         alert("Jogador inválido.");
         return;
       }
 
-      // --------------------------------
-      // 1. INCREMENTAR GOL DO JOGADOR
-      // --------------------------------
+      // -----------------------------------------------------
+      // GOL
+      // -----------------------------------------------------
 
       const newGoals = scorer.goals + 1;
 
       const { error: scorerError } = await supabase
-        .from("match_players")
+        .from("racha_game_players")
         .update({
           goals: newGoals,
         })
         .eq("id", scorer.id);
 
       if (scorerError) {
-        console.error("Erro ao registrar gol:", scorerError);
+        console.error(
+          "Erro ao registrar gol:",
+          scorerError
+        );
+
         alert("Não foi possível registrar o gol.");
         return;
       }
 
-      // --------------------------------
-      // 2. INCREMENTAR ASSISTÊNCIA
-      // --------------------------------
+      // -----------------------------------------------------
+      // ASSISTÊNCIA
+      // -----------------------------------------------------
 
       if (goalForm.assist) {
-        const assister = getMatchPlayer(goalForm.assist);
+        const assister = getGamePlayer(
+          goalForm.assist
+        );
 
         if (assister) {
-          await supabase
-            .from("match_players")
-            .update({
-              assists: assister.assists + 1,
-            })
-            .eq("id", assister.id);
+          const { error: assistError } =
+            await supabase
+              .from("racha_game_players")
+              .update({
+                assists: assister.assists + 1,
+              })
+              .eq("id", assister.id);
+
+          if (assistError) {
+            console.error(
+              "Erro ao registrar assistência:",
+              assistError
+            );
+          }
         }
       }
 
-      // --------------------------------
-      // 3. GOLS SOFRIDOS PELO GOLEIRO
-      // --------------------------------
+      // -----------------------------------------------------
+      // GOL SOFRIDO PELO GOLEIRO
+      // -----------------------------------------------------
 
       const opposingTeam = teams.find(
         (team) => team.id !== scorer.team_id
       );
 
       if (opposingTeam) {
-        const goalkeeper = getGoalkeeper(opposingTeam.id);
+        const goalkeeper = getGoalkeeper(
+          opposingTeam.id
+        );
 
         if (goalkeeper) {
           await supabase
-            .from("match_players")
+            .from("racha_game_players")
             .update({
-              goals_conceded: goalkeeper.goals_conceded + 1,
+              goals_conceded:
+                goalkeeper.goals_conceded + 1,
             })
             .eq("id", goalkeeper.id);
         }
       }
 
-      // --------------------------------
-      // 4. ATUALIZAR TELA
-      // --------------------------------
+      // -----------------------------------------------------
+      // ATUALIZAR
+      // -----------------------------------------------------
 
-      await loadTodayMatch(groupId);
+      await loadTodayRacha(groupId);
 
       setShowGoalForm(false);
 
@@ -757,609 +1066,1414 @@ export default function Admin() {
     }
   }
 
-  // =========================
-  // FINALIZAR RACHA
-  // =========================
+  // =========================================================
+  // FINALIZAR JOGO
+  // =========================================================
 
-  async function finishMatch() {
-    if (!match) return;
+  async function finishGame() {
+    if (!currentGame) return;
 
-    const confirmFinish = confirm(
-      "Tem certeza que deseja finalizar este racha?"
+    const confirmed = confirm(
+      `Deseja finalizar o Jogo ${currentGame.game_number}?`
     );
 
-    if (!confirmFinish) return;
+    if (!confirmed) return;
 
-    const { error } = await supabase
-      .from("matches")
-      .update({
-        status: "finished",
-      })
-      .eq("id", match.id);
+    setFinishingGame(true);
 
-    if (error) {
-      console.error("Erro ao finalizar racha:", error);
-      alert("Não foi possível finalizar o racha.");
-      return;
+    try {
+      const { error } = await supabase
+        .from("racha_games")
+        .update({
+          status: "finished",
+        })
+        .eq("id", currentGame.id);
+
+      if (error) {
+        console.error(
+          "Erro ao finalizar jogo:",
+          error
+        );
+
+        alert("Não foi possível finalizar o jogo.");
+        return;
+      }
+
+      setCurrentGame(null);
+      setTeams([]);
+      setGamePlayers([]);
+
+      await loadPlayers(groupId);
+      await loadTodayRacha(groupId);
+    } finally {
+      setFinishingGame(false);
     }
-
-    setMatch(null);
-    setTeams([]);
-    setMatchPlayers([]);
-    setPresentPlayers([]);
-
-    await loadPlayers(groupId);
-    await loadTodayMatch(groupId);
   }
 
-  // =========================
-  // LOGOUT
-  // =========================
+  // =========================================================
+  // ENCERRAR RACHA
+  // =========================================================
 
-  async function logout() {
-    await supabase.auth.signOut();
-    location.href = "/admin/login";
+  async function finishRacha() {
+    if (!racha) return;
+
+    const confirmed = confirm(
+      "Tem certeza que deseja encerrar o racha de hoje? Depois disso não será possível iniciar outro jogo neste racha."
+    );
+
+    if (!confirmed) return;
+
+    setFinishingRacha(true);
+
+    try {
+      // Se existir jogo aberto, não permite encerrar
+      if (currentGame) {
+        alert(
+          "Finalize o jogo atual antes de encerrar o racha."
+        );
+        return;
+      }
+
+      const { error } = await supabase
+        .from("rachas")
+        .update({
+          status: "finished",
+        })
+        .eq("id", racha.id);
+
+      if (error) {
+        console.error(
+          "Erro ao finalizar racha:",
+          error
+        );
+
+        alert("Não foi possível encerrar o racha.");
+        return;
+      }
+
+      setRacha(null);
+      setGames([]);
+      setCurrentGame(null);
+      setTeams([]);
+      setGamePlayers([]);
+      setAttendance([]);
+      setPresentPlayers([]);
+
+      await loadPlayers(groupId);
+      await loadTodayRacha(groupId);
+    } finally {
+      setFinishingRacha(false);
+    }
   }
 
-  // =========================
+  // =========================================================
+  // BANCO
+  // =========================================================
+
+  function getBenchPlayers() {
+    if (!racha) return [];
+
+    const playingIds = gamePlayers.map(
+      (player) => player.player_id
+    );
+
+    return players.filter(
+      (player) =>
+        presentPlayers.includes(player.id) &&
+        !playingIds.includes(player.id)
+    );
+  }
+
+  // =========================================================
+  // TOP ARTILHEIRO DO JOGO
+  // =========================================================
+
+  function getTopScorer() {
+    if (!gamePlayers.length) return null;
+
+    const top = [...gamePlayers].sort(
+      (a, b) => b.goals - a.goals
+    )[0];
+
+    if (!top || top.goals === 0) return null;
+
+    return top;
+  }
+
+  // =========================================================
+  // TOP GARÇOM DO JOGO
+  // =========================================================
+
+  function getTopAssister() {
+    if (!gamePlayers.length) return null;
+
+    const top = [...gamePlayers].sort(
+      (a, b) => b.assists - a.assists
+    )[0];
+
+    if (!top || top.assists === 0) return null;
+
+    return top;
+  }
+
+  // =========================================================
   // LOADING
-  // =========================
+  // =========================================================
 
   if (loading) {
     return (
       <main className="page">
-        <div className="card">Carregando...</div>
+        <div className="card">
+          Carregando...
+        </div>
       </main>
     );
   }
 
-  // =========================
+  // =========================================================
   // INTERFACE
-  // =========================
+  // =========================================================
 
   return (
     <main className="page">
-      {/* =========================
+
+      {/* =====================================================
           HEADER
-      ========================= */}
+      ===================================================== */}
 
       <header className="top">
         <div>
-          <span className="badge">⚽ Racha FC</span>
+          <span className="badge">
+            ⚽ Racha FC
+          </span>
+
           <h1>Painel do organizador</h1>
         </div>
 
-        <button className="ghost" onClick={logout}>
+        <button
+          className="ghost"
+          onClick={logout}
+        >
           <LogOut size={17} />
           Sair
         </button>
       </header>
 
-      {/* =========================
+      {/* =====================================================
           GRUPO
-      ========================= */}
+      ===================================================== */}
 
       <section className="toolbar">
+
         <select
           value={groupId}
-          onChange={(e) => setGroupId(e.target.value)}
+          onChange={(e) =>
+            setGroupId(e.target.value)
+          }
         >
-          {groups.map((g) => (
-            <option key={g.id} value={g.id}>
-              {g.name}
+          {groups.map((group) => (
+            <option
+              key={group.id}
+              value={group.id}
+            >
+              {group.name}
             </option>
           ))}
         </select>
 
-        <form onSubmit={addGroup} className="inline">
+        <form
+          onSubmit={addGroup}
+          className="inline"
+        >
           <input
             placeholder="Novo grupo"
             value={groupName}
-            onChange={(e) => setGroupName(e.target.value)}
+            onChange={(e) =>
+              setGroupName(e.target.value)
+            }
           />
 
-          <button className="button" type="submit">
+          <button
+            className="button"
+            type="submit"
+          >
             Criar grupo
           </button>
         </form>
+
       </section>
 
-      {/* =========================
+      {/* =====================================================
           MENU
-      ========================= */}
+      ===================================================== */}
 
       <nav className="tabs">
-        <a className="active">Racha de hoje</a>
-        <a href="/admin/jogadores">Jogadores</a>
-        <a href="/admin/historico">Histórico</a>
+        <a className="active">
+          Racha de hoje
+        </a>
+
+        <a href="/admin/jogadores">
+          Jogadores
+        </a>
+
+        <a href="/admin/historico">
+          Histórico
+        </a>
       </nav>
 
-      {/* =========================
+      {/* =====================================================
           RACHA
-      ========================= */}
+      ===================================================== */}
 
       <section className="racha-area">
-        {loadingMatch ? (
-          <div className="card">
-            <p className="muted">Carregando racha de hoje...</p>
-          </div>
-        ) : !match ? (
-          <>
-            {/* =========================
-                PRÉ-RACHA
-            ========================= */}
 
+        {loadingRacha ? (
+          <div className="card">
+            <p className="muted">
+              Carregando racha de hoje...
+            </p>
+          </div>
+        ) : !racha ? (
+
+          /* ==================================================
+             PRÉ-RACHA
+          ================================================== */
+
+          <>
             <div className="card">
+
               <div className="section-title">
+
                 <div>
                   <h2>
-                    <CalendarDays /> Racha de hoje
+                    <CalendarDays />
+                    Racha de hoje
                   </h2>
 
                   <p className="muted">
-                    Selecione quem está presente e depois sorteie os
-                    times.
+                    Selecione quem está presente,
+                    escolha o tamanho dos times e
+                    comece o primeiro jogo.
                   </p>
                 </div>
 
                 <span className="present-count">
                   {presentPlayers.length} presentes
                 </span>
+
               </div>
 
+              {/* =================================================
+                  TAMANHO DOS TIMES
+              ================================================= */}
+
+              <div className="players-per-team-box">
+
+                <div>
+                  <b>
+                    Jogadores por time
+                  </b>
+
+                  <small>
+                    {playersPerTeam * 2} jogam por vez
+                  </small>
+                </div>
+
+                <div className="number-control">
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPlayersPerTeam(
+                        (value) =>
+                          Math.max(
+                            1,
+                            value - 1
+                          )
+                      )
+                    }
+                    disabled={
+                      playersPerTeam <= 1
+                    }
+                  >
+                    <Minus size={17} />
+                  </button>
+
+                  <strong>
+                    {playersPerTeam}
+                  </strong>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPlayersPerTeam(
+                        (value) =>
+                          Math.min(
+                            15,
+                            value + 1
+                          )
+                      )
+                    }
+                  >
+                    <Plus size={17} />
+                  </button>
+
+                </div>
+
+              </div>
+
+              {/* =================================================
+                  RESUMO
+              ================================================= */}
+
+              <div className="team-size-summary">
+
+                <span>
+                  🔵 Azul:{" "}
+                  <b>{playersPerTeam}</b>
+                </span>
+
+                <span>
+                  🔴 Vermelho:{" "}
+                  <b>{playersPerTeam}</b>
+                </span>
+
+                <span>
+                  🪑 Banco:{" "}
+                  <b>
+                    {Math.max(
+                      0,
+                      presentPlayers.length -
+                        playersPerTeam * 2
+                    )}
+                  </b>
+                </span>
+
+              </div>
+
+              {/* =================================================
+                  JOGADORES
+              ================================================= */}
+
               {players.length === 0 ? (
+
                 <div className="empty-box">
+
                   <Users size={32} />
 
-                  <b>Nenhum jogador cadastrado</b>
+                  <b>
+                    Nenhum jogador cadastrado
+                  </b>
 
                   <span>
-                    Adicione os jogadores antes de iniciar o racha.
+                    Adicione os jogadores antes
+                    de iniciar o racha.
                   </span>
+
                 </div>
+
               ) : (
+
                 <>
+
                   <div className="attendance-list">
+
                     {players.map((player) => {
-                      const selected = presentPlayers.includes(
-                        player.id
-                      );
+
+                      const selected =
+                        presentPlayers.includes(
+                          player.id
+                        );
 
                       return (
                         <button
                           key={player.id}
                           type="button"
                           className={`attendance-player ${
-                            selected ? "selected" : ""
+                            selected
+                              ? "selected"
+                              : ""
                           }`}
                           onClick={() =>
-                            togglePresent(player.id)
+                            togglePresent(
+                              player.id
+                            )
                           }
                         >
+
                           <div className="avatar">
+
                             {player.photo_url ? (
                               <img
-                                src={player.photo_url}
-                                alt={player.name}
+                                src={
+                                  player.photo_url
+                                }
+                                alt={
+                                  player.name
+                                }
                               />
                             ) : (
                               player.name[0]?.toUpperCase()
                             )}
+
                           </div>
 
                           <div className="attendance-info">
-                            <b>{player.name}</b>
+
+                            <b>
+                              {player.name}
+                            </b>
 
                             <small>
-                              Overall {player.overall}
+                              Overall{" "}
+                              {player.overall}
                             </small>
+
                           </div>
 
                           <div className="check">
-                            {selected ? "✓" : ""}
+                            {selected
+                              ? "✓"
+                              : ""}
                           </div>
+
                         </button>
                       );
                     })}
+
                   </div>
 
+                  {/* =================================================
+                      BOTÃO COMEÇAR
+                  ================================================= */}
+
                   <div className="start-area">
+
                     <button
                       className="button start-button"
                       type="button"
-                      onClick={startMatch}
+                      onClick={
+                        startRacha
+                      }
                       disabled={
-                        startingMatch ||
-                        presentPlayers.length < 2
+                        startingRacha ||
+                        presentPlayers.length <
+                          playersPerTeam * 2
                       }
                     >
+
                       <Shuffle size={18} />
 
-                      {startingMatch
+                      {startingRacha
                         ? "Sorteando..."
                         : "Sortear times e iniciar"}
+
                     </button>
+
+                    {presentPlayers.length <
+                      playersPerTeam * 2 && (
+                      <small className="muted">
+                        Selecione pelo menos{" "}
+                        {playersPerTeam * 2}{" "}
+                        jogadores.
+                      </small>
+                    )}
+
                   </div>
+
                 </>
               )}
+
             </div>
 
-            {/* =========================
+            {/* ==================================================
                 CADASTRAR JOGADOR
-            ========================= */}
+            ================================================== */}
 
             <div className="card">
+
               <h2>
-                <Users /> Jogadores
+                <Users />
+                Jogadores
               </h2>
 
-              <form onSubmit={addPlayer} className="inline">
+              <form
+                onSubmit={addPlayer}
+                className="inline"
+              >
+
                 <input
                   placeholder="Nome do jogador"
                   value={newPlayer}
                   onChange={(e) =>
-                    setNewPlayer(e.target.value)
+                    setNewPlayer(
+                      e.target.value
+                    )
                   }
                 />
 
-                <button className="button" type="submit">
+                <button
+                  className="button"
+                  type="submit"
+                >
                   Adicionar
                 </button>
+
               </form>
+
             </div>
           </>
+
         ) : (
+
+          /* ==================================================
+             RACHA EM ANDAMENTO
+          ================================================== */
+
           <>
-            {/* =========================
-                PLACAR
-            ========================= */}
 
-            <div className="score-card">
-              <div className="live-label">
-                <span className="live-dot" />
-                RACHA EM ANDAMENTO
-              </div>
+            {/* =================================================
+                CABEÇALHO DO RACHA
+            ================================================= */}
 
-              <div className="scoreboard">
-                {teams.map((team) => (
-                  <div className="score-team" key={team.id}>
-                    <span
-                      className="team-color"
-                      style={{
-                        backgroundColor: team.color,
-                      }}
-                    />
+            <div className="card">
 
-                    <b>{team.name}</b>
+              <div className="section-title">
 
-                    <strong>
-                      {getTeamScore(team.id)}
-                    </strong>
+                <div>
+
+                  <div className="live-label">
+                    <span className="live-dot" />
+                    RACHA EM ANDAMENTO
                   </div>
-                ))}
-              </div>
 
-              <div className="score-actions">
-                <button
-                  className="button goal-button"
-                  type="button"
-                  onClick={openGoalForm}
-                >
-                  <Plus size={18} />
-                  Registrar gol
-                </button>
+                  <h2>
+                    ⚽ Racha de hoje
+                  </h2>
+
+                  <p className="muted">
+                    {presentPlayers.length}{" "}
+                    jogadores presentes ·{" "}
+                    {playersPerTeam} por time
+                  </p>
+
+                </div>
 
                 <button
                   className="finish-button"
                   type="button"
-                  onClick={finishMatch}
+                  onClick={
+                    finishRacha
+                  }
+                  disabled={
+                    finishingRacha ||
+                    !!currentGame
+                  }
                 >
                   <CheckCircle2 size={17} />
-                  Finalizar racha
+
+                  {finishingRacha
+                    ? "Encerrando..."
+                    : "Encerrar racha"}
                 </button>
+
               </div>
+
+              {/* =================================================
+                  HISTÓRICO DE JOGOS DO RACHA
+              ================================================= */}
+
+              {games.length > 0 && (
+                <div className="racha-games-list">
+
+                  {games.map((game) => {
+
+                    const isCurrent =
+                      currentGame?.id ===
+                      game.id;
+
+                    return (
+                      <span
+                        key={game.id}
+                        className={
+                          isCurrent
+                            ? "game-pill active"
+                            : "game-pill"
+                        }
+                      >
+                        Jogo{" "}
+                        {game.game_number}
+
+                        {game.status ===
+                          "finished"
+                          ? " ✓"
+                          : " • ao vivo"}
+                      </span>
+                    );
+                  })}
+
+                </div>
+              )}
+
             </div>
 
-            {/* =========================
-                REGISTRAR GOL
-            ========================= */}
+            {/* =================================================
+                JOGO ATUAL
+            ================================================= */}
 
-            {showGoalForm && (
-              <div className="card goal-form-card">
-                <div className="section-title">
-                  <div>
-                    <h2>
-                      <Target /> Registrar gol
-                    </h2>
+            {currentGame ? (
 
-                    <p className="muted">
-                      Informe quem marcou e, se houver, quem deu
-                      a assistência.
-                    </p>
+              <>
+
+                {/* =================================================
+                    PLACAR
+                ================================================= */}
+
+                <div className="score-card">
+
+                  <div className="live-label">
+                    <span className="live-dot" />
+
+                    JOGO{" "}
+                    {currentGame.game_number}{" "}
+                    EM ANDAMENTO
                   </div>
-                </div>
 
-                <form onSubmit={registerGoal}>
-                  <div className="form-grid">
-                    <label>
-                      <span>Quem fez o gol?</span>
+                  <div className="scoreboard">
 
-                      <select
-                        value={goalForm.scorer}
-                        onChange={(e) =>
-                          setGoalForm((current) => ({
-                            ...current,
-                            scorer: e.target.value,
-                          }))
-                        }
+                    {teams.map((team) => (
+
+                      <div
+                        className="score-team"
+                        key={team.id}
                       >
-                        <option value="">
-                          Selecionar jogador
-                        </option>
 
-                        {matchPlayers.map((mp) => {
-                          const player = getPlayer(
-                            mp.player_id
-                          );
-
-                          if (!player) return null;
-
-                          const team = getPlayerTeam(
-                            player.id
-                          );
-
-                          return (
-                            <option
-                              key={mp.id}
-                              value={player.id}
-                            >
-                              {player.name} —{" "}
-                              {team?.name || "Sem time"}
-                            </option>
-                          );
-                        })}
-                      </select>
-                    </label>
-
-                    <label>
-                      <span>Assistência</span>
-
-                      <select
-                        value={goalForm.assist}
-                        onChange={(e) =>
-                          setGoalForm((current) => ({
-                            ...current,
-                            assist: e.target.value,
-                          }))
-                        }
-                      >
-                        <option value="">
-                          Sem assistência
-                        </option>
-
-                        {matchPlayers
-                          .filter(
-                            (mp) =>
-                              mp.player_id !==
-                              goalForm.scorer
-                          )
-                          .map((mp) => {
-                            const player = getPlayer(
-                              mp.player_id
-                            );
-
-                            if (!player) return null;
-
-                            return (
-                              <option
-                                key={mp.id}
-                                value={player.id}
-                              >
-                                {player.name}
-                              </option>
-                            );
-                          })}
-                      </select>
-                    </label>
-                  </div>
-
-                  <div className="form-actions">
-                    <button
-                      type="button"
-                      className="ghost"
-                      onClick={() =>
-                        setShowGoalForm(false)
-                      }
-                    >
-                      Cancelar
-                    </button>
-
-                    <button
-                      className="button"
-                      type="submit"
-                      disabled={savingGoal}
-                    >
-                      <Target size={17} />
-
-                      {savingGoal
-                        ? "Salvando..."
-                        : "Confirmar gol"}
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
-
-            {/* =========================
-                TIMES
-            ========================= */}
-
-            <div className="teams-grid">
-              {teams.map((team) => {
-                const teamPlayers = matchPlayers.filter(
-                  (player) => player.team_id === team.id
-                );
-
-                const goalkeeper = getGoalkeeper(team.id);
-
-                return (
-                  <div className="card team-card" key={team.id}>
-                    <div className="team-header">
-                      <div>
                         <span
                           className="team-color"
                           style={{
-                            backgroundColor: team.color,
+                            backgroundColor:
+                              team.color,
                           }}
                         />
 
-                        <h2>{team.name}</h2>
+                        <b>
+                          {team.name}
+                        </b>
+
+                        <strong>
+                          {getTeamScore(
+                            team.id
+                          )}
+                        </strong>
+
                       </div>
 
-                      <strong className="team-score">
-                        {getTeamScore(team.id)}
-                      </strong>
+                    ))}
+
+                  </div>
+
+                  <div className="score-actions">
+
+                    <button
+                      className="button goal-button"
+                      type="button"
+                      onClick={
+                        openGoalForm
+                      }
+                    >
+                      <Plus size={18} />
+                      Registrar gol
+                    </button>
+
+                    <button
+                      className="finish-button"
+                      type="button"
+                      onClick={
+                        finishGame
+                      }
+                      disabled={
+                        finishingGame
+                      }
+                    >
+                      <CheckCircle2
+                        size={17}
+                      />
+
+                      {finishingGame
+                        ? "Finalizando..."
+                        : "Finalizar jogo"}
+                    </button>
+
+                  </div>
+
+                </div>
+
+                {/* =================================================
+                    REGISTRAR GOL
+                ================================================= */}
+
+                {showGoalForm && (
+
+                  <div className="card goal-form-card">
+
+                    <div className="section-title">
+
+                      <div>
+
+                        <h2>
+                          <Target />
+                          Registrar gol
+                        </h2>
+
+                        <p className="muted">
+                          Informe quem marcou
+                          e, se houver, a
+                          assistência.
+                        </p>
+
+                      </div>
+
                     </div>
 
-                    <div className="team-players">
-                      {teamPlayers.map((mp) => {
-                        const player = getPlayer(
-                          mp.player_id
-                        );
+                    <form
+                      onSubmit={
+                        registerGoal
+                      }
+                    >
 
-                        if (!player) return null;
+                      <div className="form-grid">
 
-                        const isGoalkeeper =
-                          mp.role === "goalkeeper";
+                        <label>
 
-                        return (
-                          <div
-                            className="match-player"
-                            key={mp.id}
+                          <span>
+                            Quem fez o gol?
+                          </span>
+
+                          <select
+                            value={
+                              goalForm.scorer
+                            }
+                            onChange={(e) =>
+                              setGoalForm(
+                                (current) => ({
+                                  ...current,
+                                  scorer:
+                                    e.target
+                                      .value,
+                                })
+                              )
+                            }
                           >
+
+                            <option value="">
+                              Selecionar jogador
+                            </option>
+
+                            {gamePlayers.map(
+                              (gp) => {
+
+                                const player =
+                                  getPlayer(
+                                    gp.player_id
+                                  );
+
+                                if (!player)
+                                  return null;
+
+                                const team =
+                                  getPlayerTeam(
+                                    player.id
+                                  );
+
+                                return (
+                                  <option
+                                    key={gp.id}
+                                    value={
+                                      player.id
+                                    }
+                                  >
+                                    {player.name}{" "}
+                                    —{" "}
+                                    {team?.name ||
+                                      "Sem time"}
+                                  </option>
+                                );
+                              }
+                            )}
+
+                          </select>
+
+                        </label>
+
+                        <label>
+
+                          <span>
+                            Assistência
+                          </span>
+
+                          <select
+                            value={
+                              goalForm.assist
+                            }
+                            onChange={(e) =>
+                              setGoalForm(
+                                (current) => ({
+                                  ...current,
+                                  assist:
+                                    e.target
+                                      .value,
+                                })
+                              )
+                            }
+                          >
+
+                            <option value="">
+                              Sem assistência
+                            </option>
+
+                            {gamePlayers
+                              .filter(
+                                (gp) =>
+                                  gp.player_id !==
+                                  goalForm.scorer
+                              )
+                              .map((gp) => {
+
+                                const player =
+                                  getPlayer(
+                                    gp.player_id
+                                  );
+
+                                if (!player)
+                                  return null;
+
+                                return (
+                                  <option
+                                    key={gp.id}
+                                    value={
+                                      player.id
+                                    }
+                                  >
+                                    {player.name}
+                                  </option>
+                                );
+                              })}
+
+                          </select>
+
+                        </label>
+
+                      </div>
+
+                      <div className="form-actions">
+
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() =>
+                            setShowGoalForm(
+                              false
+                            )
+                          }
+                        >
+                          Cancelar
+                        </button>
+
+                        <button
+                          className="button"
+                          type="submit"
+                          disabled={
+                            savingGoal
+                          }
+                        >
+
+                          <Target size={17} />
+
+                          {savingGoal
+                            ? "Salvando..."
+                            : "Confirmar gol"}
+
+                        </button>
+
+                      </div>
+
+                    </form>
+
+                  </div>
+                )}
+
+                {/* =================================================
+                    TIMES
+                ================================================= */}
+
+                <div className="teams-grid">
+
+                  {teams.map((team) => {
+
+                    const teamPlayers =
+                      gamePlayers.filter(
+                        (player) =>
+                          player.team_id ===
+                          team.id
+                      );
+
+                    const goalkeeper =
+                      getGoalkeeper(
+                        team.id
+                      );
+
+                    return (
+
+                      <div
+                        className="card team-card"
+                        key={team.id}
+                      >
+
+                        <div className="team-header">
+
+                          <div>
+
+                            <span
+                              className="team-color"
+                              style={{
+                                backgroundColor:
+                                  team.color,
+                              }}
+                            />
+
+                            <h2>
+                              {team.name}
+                            </h2>
+
+                          </div>
+
+                          <strong className="team-score">
+                            {getTeamScore(
+                              team.id
+                            )}
+                          </strong>
+
+                        </div>
+
+                        <div className="team-players">
+
+                          {teamPlayers.map(
+                            (gp) => {
+
+                              const player =
+                                getPlayer(
+                                  gp.player_id
+                                );
+
+                              if (!player)
+                                return null;
+
+                              const isGoalkeeper =
+                                gp.role ===
+                                "goalkeeper";
+
+                              return (
+
+                                <div
+                                  className="match-player"
+                                  key={gp.id}
+                                >
+
+                                  <div className="avatar">
+
+                                    {player.photo_url ? (
+                                      <img
+                                        src={
+                                          player.photo_url
+                                        }
+                                        alt={
+                                          player.name
+                                        }
+                                      />
+                                    ) : (
+                                      player.name[0]?.toUpperCase()
+                                    )}
+
+                                  </div>
+
+                                  <div className="match-player-info">
+
+                                    <b>
+                                      {player.name}
+                                    </b>
+
+                                    <small>
+
+                                      {isGoalkeeper
+                                        ? "🧤 Goleiro"
+                                        : `⚽ ${gp.goals} gols · 🎯 ${gp.assists} assist.`}
+
+                                    </small>
+
+                                    {isGoalkeeper && (
+                                      <small>
+                                        Sofreu{" "}
+                                        {
+                                          gp.goals_conceded
+                                        }{" "}
+                                        gol
+                                        {gp.goals_conceded !==
+                                        1
+                                          ? "s"
+                                          : ""}
+                                      </small>
+                                    )}
+
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    className={`goalkeeper-button ${
+                                      isGoalkeeper
+                                        ? "active"
+                                        : ""
+                                    }`}
+                                    title={
+                                      isGoalkeeper
+                                        ? "Remover como goleiro"
+                                        : "Definir como goleiro"
+                                    }
+                                    onClick={() =>
+                                      setGoalkeeper(
+                                        gp.id,
+                                        team.id
+                                      )
+                                    }
+                                  >
+                                    <Shield
+                                      size={16}
+                                    />
+                                  </button>
+
+                                </div>
+                              );
+                            }
+                          )}
+
+                        </div>
+
+                        {goalkeeper && (
+
+                          <div className="goalkeeper-label">
+
+                            🧤 Goleiro atual:{" "}
+
+                            <b>
+                              {
+                                getPlayer(
+                                  goalkeeper.player_id
+                                )?.name
+                              }
+                            </b>
+
+                          </div>
+                        )}
+
+                      </div>
+                    );
+                  })}
+
+                </div>
+
+                {/* =================================================
+                    BANCO
+                ================================================= */}
+
+                {getBenchPlayers().length >
+                  0 && (
+
+                  <div className="card bench-card">
+
+                    <div className="section-title">
+
+                      <div>
+
+                        <h2>
+                          🪑 Banco
+                        </h2>
+
+                        <p className="muted">
+                          Jogadores presentes
+                          que não estão neste
+                          jogo.
+                        </p>
+
+                      </div>
+
+                      <span className="present-count">
+                        {
+                          getBenchPlayers()
+                            .length
+                        }
+                      </span>
+
+                    </div>
+
+                    <div className="attendance-list">
+
+                      {getBenchPlayers().map(
+                        (player) => (
+
+                          <div
+                            className="attendance-player"
+                            key={player.id}
+                          >
+
                             <div className="avatar">
+
                               {player.photo_url ? (
                                 <img
-                                  src={player.photo_url}
-                                  alt={player.name}
+                                  src={
+                                    player.photo_url
+                                  }
+                                  alt={
+                                    player.name
+                                  }
                                 />
                               ) : (
                                 player.name[0]?.toUpperCase()
                               )}
+
                             </div>
 
-                            <div className="match-player-info">
-                              <b>{player.name}</b>
+                            <div className="attendance-info">
+
+                              <b>
+                                {player.name}
+                              </b>
 
                               <small>
-                                {isGoalkeeper
-                                  ? "🧤 Goleiro"
-                                  : `⚽ ${mp.goals} gols · 🎯 ${mp.assists} assist.`}
+                                Overall{" "}
+                                {player.overall}
                               </small>
 
-                              {isGoalkeeper && (
-                                <small>
-                                  Sofreu{" "}
-                                  {mp.goals_conceded} gol
-                                  {mp.goals_conceded !== 1
-                                    ? "s"
-                                    : ""}
-                                </small>
-                              )}
                             </div>
 
-                            <button
-                              type="button"
-                              className={`goalkeeper-button ${
-                                isGoalkeeper
-                                  ? "active"
-                                  : ""
-                              }`}
-                              title="Definir como goleiro"
-                              onClick={() =>
-                                setGoalkeeper(
-                                  mp.id,
-                                  team.id
-                                )
-                              }
-                            >
-                              <Shield size={16} />
-                            </button>
                           </div>
-                        );
-                      })}
+                        )
+                      )}
+
                     </div>
 
-                    {goalkeeper && (
-                      <div className="goalkeeper-label">
-                        🧤 Goleiro atual:{" "}
-                        <b>
-                          {
-                            getPlayer(
-                              goalkeeper.player_id
-                            )?.name
-                          }
-                        </b>
-                      </div>
-                    )}
                   </div>
-                );
-              })}
-            </div>
+                )}
 
-            {/* =========================
-                RESUMO
-            ========================= */}
+                {/* =================================================
+                    RESUMO DO JOGO
+                ================================================= */}
 
-            <div className="stats">
-              <div>
-                <Target />
-                <b>Artilheiro</b>
+                <div className="stats">
 
-                <span>
-                  {(() => {
-                    if (!matchPlayers.length)
-                      return "Nenhum gol";
+                  <div>
 
-                    const top = [...matchPlayers].sort(
-                      (a, b) => b.goals - a.goals
-                    )[0];
+                    <Target />
 
-                    if (!top || top.goals === 0)
-                      return "Nenhum gol";
+                    <b>
+                      Artilheiro
+                    </b>
 
-                    return `${getPlayer(top.player_id)?.name} — ${top.goals} gol${
-                      top.goals !== 1 ? "s" : ""
-                    }`;
-                  })()}
-                </span>
-              </div>
+                    <span>
 
-              <div>
-                <Trophy />
+                      {(() => {
 
-                <b>Garçom</b>
+                        const top =
+                          getTopScorer();
 
-                <span>
-                  {(() => {
-                    if (!matchPlayers.length)
-                      return "Nenhuma assistência";
+                        if (!top)
+                          return "Nenhum gol";
 
-                    const top = [...matchPlayers].sort(
-                      (a, b) => b.assists - a.assists
-                    )[0];
+                        return `${
+                          getPlayer(
+                            top.player_id
+                          )?.name
+                        } — ${
+                          top.goals
+                        } gol${
+                          top.goals !== 1
+                            ? "s"
+                            : ""
+                        }`;
 
-                    if (!top || top.assists === 0)
-                      return "Nenhuma assistência";
+                      })()}
 
-                    return `${getPlayer(top.player_id)?.name} — ${top.assists} assist.`;
-                  })()}
-                </span>
-              </div>
-            </div>
+                    </span>
+
+                  </div>
+
+                  <div>
+
+                    <Trophy />
+
+                    <b>
+                      Garçom
+                    </b>
+
+                    <span>
+
+                      {(() => {
+
+                        const top =
+                          getTopAssister();
+
+                        if (!top)
+                          return "Nenhuma assistência";
+
+                        return `${
+                          getPlayer(
+                            top.player_id
+                          )?.name
+                        } — ${
+                          top.assists
+                        } assist.`;
+
+                      })()}
+
+                    </span>
+
+                  </div>
+
+                </div>
+
+              </>
+
+            ) : (
+
+              /* ==================================================
+                 ENTRE JOGOS
+              ================================================== */
+
+              <>
+
+                <div className="card">
+
+                  <div className="empty-box">
+
+                    <CheckCircle2 size={38} />
+
+                    <b>
+                      Jogo{" "}
+                      {games.length > 0
+                        ? games.length
+                        : 1}{" "}
+                      finalizado
+                    </b>
+
+                    <span>
+                      O resultado foi salvo.
+                      Agora você pode iniciar
+                      o próximo jogo.
+                    </span>
+
+                    <button
+                      className="button"
+                      type="button"
+                      onClick={
+                        startNextGame
+                      }
+                      disabled={
+                        startingGame ||
+                        presentPlayers.length <
+                          playersPerTeam * 2
+                      }
+                    >
+
+                      <Play size={18} />
+
+                      {startingGame
+                        ? "Sorteando..."
+                        : `Iniciar jogo ${
+                            games.length + 1
+                          }`}
+
+                    </button>
+
+                    {presentPlayers.length <
+                      playersPerTeam * 2 && (
+                      <small className="muted">
+                        São necessários pelo
+                        menos{" "}
+                        {playersPerTeam * 2}{" "}
+                        jogadores presentes.
+                      </small>
+                    )}
+
+                  </div>
+
+                </div>
+
+                {/* =================================================
+                    HISTÓRICO DOS JOGOS
+                ================================================= */}
+
+                {games.length > 0 && (
+
+                  <div className="card">
+
+                    <h2>
+                      <Trophy />
+                      Jogos deste racha
+                    </h2>
+
+                    <div className="racha-games-list large">
+
+                      {games.map(
+                        (game) => (
+
+                          <div
+                            className="game-history-item"
+                            key={game.id}
+                          >
+
+                            <div>
+                              <b>
+                                Jogo{" "}
+                                {
+                                  game.game_number
+                                }
+                              </b>
+
+                              <small>
+                                {game.status ===
+                                "finished"
+                                  ? "Finalizado"
+                                  : "Em andamento"}
+                              </small>
+                            </div>
+
+                            <CheckCircle2
+                              size={18}
+                            />
+
+                          </div>
+                        )
+                      )}
+
+                    </div>
+
+                  </div>
+                )}
+
+              </>
+            )}
+
           </>
         )}
+
       </section>
     </main>
   );
+
+  // =========================================================
+  // LOGOUT
+  // =========================================================
+
+  async function logout() {
+    await supabase.auth.signOut();
+    location.href = "/admin/login";
+  }
 }
