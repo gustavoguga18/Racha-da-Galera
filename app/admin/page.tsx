@@ -91,6 +91,7 @@ type GamePlayer = {
   id: string;
   game_id: string;
   team_id: string | null;
+  pool_team_id: string | null;
   player_id: string;
   role: "field" | "goalkeeper";
   goals: number;
@@ -1074,7 +1075,7 @@ export default function Admin() {
 
     const gamePlayerRows: {
       game_id: string;
-      team_id: string;
+      pool_team_id: string;
       player_id: string;
       role: "field";
     }[] = [];
@@ -1104,8 +1105,7 @@ export default function Admin() {
           gamePlayerRows.push({
             game_id:
               gameData.id,
-            team_id:
-              team.id,
+           pool_team_id: team.id,
             player_id:
               membership.player_id,
             role: "field",
