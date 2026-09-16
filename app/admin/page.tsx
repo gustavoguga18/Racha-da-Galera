@@ -102,6 +102,16 @@ type GamePlayer = {
   left_at: string | null;
 };
 
+type GameGoal = {
+  id: string;
+  game_id: string;
+  scorer_id: string;
+  assist_id: string | null;
+  team_id: string;
+  is_own_goal: boolean;
+  created_at: string;
+};
+
 type Attendance = {
   id: string;
   racha_id: string;
@@ -191,6 +201,8 @@ export default function Admin() {
   const [games, setGames] = useState<Game[]>([]);
   const [expandedGameId, setExpandedGameId] =
   useState<string | null>(null);
+  const [gameGoals, setGameGoals] =
+  useState<GameGoal[]>([]);
   const [currentGame, setCurrentGame] = useState<Game | null>(
     null
   );
@@ -615,6 +627,24 @@ function parseWhatsAppList(text: string) {
 
     return rows;
   }
+  async function loadGameGoals(gameId: string) {
+  const { data, error } = await supabase
+    .from("racha_game_goals")
+    .select("*")
+    .eq("game_id", gameId)
+    .order("created_at");
+
+  if (error) {
+    console.error(
+      "Erro ao carregar gols do jogo:",
+      error
+    );
+
+    return [];
+  }
+
+  return (data || []) as GameGoal[];
+}
 
   /* =======================================================
      CARREGAR JOGO
@@ -5036,30 +5066,48 @@ await loadPlayers(groupId);
 
                 <div className="stats">
                   {games.map(
-                    (game) => (
-                      <div
-                        key={
-                          game.id
-                        }
-                      >
-                        <Trophy />
+  (game) => (
+    <div
+      key={game.id}
+      onClick={async () => {
+        if (
+          expandedGameId ===
+          game.id
+        ) {
+          setExpandedGameId(null);
+          return;
+        }
 
-                        <b>
-                          Jogo{" "}
-                          {
-                            game.game_number
-                          }
-                        </b>
+        const goals =
+          await loadGameGoals(
+            game.id
+          );
 
-                        <span>
-                          {game.status ===
-                          "finished"
-                            ? "Finalizado"
-                            : "Em andamento"}
-                        </span>
-                      </div>
-                    )
-                  )}
+        setGameGoals(goals);
+        setExpandedGameId(
+          game.id
+        );
+      }}
+      style={{
+        cursor: "pointer",
+      }}
+    >
+      <Trophy />
+
+      <b>
+        Jogo{" "}
+        {game.game_number}
+      </b>
+
+      <span>
+        {game.status ===
+        "finished"
+          ? "Finalizado"
+          : "Em andamento"}
+      </span>
+    </div>
+  )
+)}
                 </div>
               </div>
             </>
