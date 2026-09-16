@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase-browser";
 import {
   LogOut,
@@ -10,15 +10,18 @@ import {
   Target,
   Shuffle,
   Play,
+  Pause,
   CheckCircle2,
   Plus,
-  Minus,
   Shield,
-  Pause,
-  Square,
   Clock,
   ArrowRightLeft,
+  RotateCcw,
 } from "lucide-react";
+
+/* =====================================================
+   TIPOS
+===================================================== */
 
 type Group = {
   id: string;
@@ -50,14 +53,6 @@ type Game = {
   racha_id: string;
   game_number: number;
   status: "open" | "finished";
-  duration_minutes: number;
-  timer_elapsed_seconds: number;
-  timer_started_at: string | null;
-  timer_status:
-    | "stopped"
-    | "running"
-    | "paused"
-    | "finished";
   created_at: string;
 };
 
@@ -91,25 +86,38 @@ type Attendance = {
 type GoalForm = {
   scorer: string;
   assist: string;
+  concededTeam: string;
 };
+
+type TimerStatus = "idle" | "running" | "paused" | "finished";
+
+/* =====================================================
+   CONSTANTES
+===================================================== */
 
 const TEAM_COLORS = [
   "#2563eb",
   "#dc2626",
   "#16a34a",
-  "#eab308",
   "#9333ea",
-  "#f97316",
+  "#ea580c",
   "#0891b2",
   "#db2777",
+  "#ca8a04",
 ];
+
+const DEFAULT_MINUTES = 10;
+
+/* =====================================================
+   COMPONENTE
+===================================================== */
 
 export default function Admin() {
   const supabase = createClient();
 
-  // =========================================================
-  // GERAL
-  // =========================================================
+  /* =====================================================
+     ESTADO GERAL
+  ===================================================== */
 
   const [groups, setGroups] = useState<Group[]>([]);
   const [groupId, setGroupId] = useState("");
@@ -121,85 +129,59 @@ export default function Admin() {
 
   const [loading, setLoading] = useState(true);
   const [loadingPlayers, setLoadingPlayers] = useState(false);
-  const [loadingRacha, setLoadingRacha] = useState(false);
 
-  // =========================================================
-  // RACHA
-  // =========================================================
+  /* =====================================================
+     RACHA
+  ===================================================== */
 
   const [racha, setRacha] = useState<Racha | null>(null);
-
   const [games, setGames] = useState<Game[]>([]);
-  const [currentGame, setCurrentGame] =
-    useState<Game | null>(null);
+  const [currentGame, setCurrentGame] = useState<Game | null>(null);
 
   const [teams, setTeams] = useState<Team[]>([]);
-  const [gamePlayers, setGamePlayers] = useState<
-    GamePlayer[]
-  >([]);
+  const [gamePlayers, setGamePlayers] = useState<GamePlayer[]>([]);
 
-  const [presentPlayers, setPresentPlayers] =
-    useState<string[]>([]);
+  const [attendance, setAttendance] = useState<Attendance[]>([]);
+  const [presentPlayers, setPresentPlayers] = useState<string[]>([]);
 
-  const [playersPerTeam, setPlayersPerTeam] =
-    useState(5);
+  const [playersPerTeam, setPlayersPerTeam] = useState("5");
 
-  // duração do próximo jogo
-  const [gameDuration, setGameDuration] =
-    useState(10);
+  const [loadingRacha, setLoadingRacha] = useState(false);
+  const [startingRacha, setStartingRacha] = useState(false);
+  const [startingGame, setStartingGame] = useState(false);
+  const [finishingGame, setFinishingGame] = useState(false);
 
-  const [startingRacha, setStartingRacha] =
-    useState(false);
+  /* =====================================================
+     GOL
+  ===================================================== */
 
-  const [startingGame, setStartingGame] =
-    useState(false);
+  const [showGoalForm, setShowGoalForm] = useState(false);
 
-  const [finishingGame, setFinishingGame] =
-    useState(false);
+  const [goalForm, setGoalForm] = useState<GoalForm>({
+    scorer: "",
+    assist: "",
+    concededTeam: "",
+  });
 
-  const [finishingRacha, setFinishingRacha] =
-    useState(false);
+  const [savingGoal, setSavingGoal] = useState(false);
 
-  // =========================================================
-  // CRONÔMETRO
-  // =========================================================
+  /* =====================================================
+     TIMER
+  ===================================================== */
 
-  const [timerSeconds, setTimerSeconds] =
-    useState(0);
+  const [durationMinutes, setDurationMinutes] =
+    useState(DEFAULT_MINUTES);
 
-  // =========================================================
-  // GOL
-  // =========================================================
+  const [timerStatus, setTimerStatus] =
+    useState<TimerStatus>("idle");
 
-  const [showGoalForm, setShowGoalForm] =
-    useState(false);
+  const [timerSeconds, setTimerSeconds] = useState(
+    DEFAULT_MINUTES * 60
+  );
 
-  const [goalForm, setGoalForm] =
-    useState<GoalForm>({
-      scorer: "",
-      assist: "",
-    });
-
-  const [savingGoal, setSavingGoal] =
-    useState(false);
-
-  // =========================================================
-  // DATA
-  // =========================================================
-
-  function getToday() {
-    const now = new Date();
-
-    return `${now.getFullYear()}-${String(
-      now.getMonth() + 1
-    ).padStart(2, "0")}-${String(
-      now.getDate()
-    ).padStart(2, "0")}`;
-  }
-
-  // =========================================================
-  // GRUPOS
-  // =========================================================
+  /* =====================================================
+     CARREGAR GRUPOS
+  ===================================================== */
 
   async function loadGroups() {
     const {
@@ -217,27 +199,32 @@ export default function Admin() {
       .order("created_at");
 
     if (error) {
-      console.error(error);
+      console.error("Erro ao carregar grupos:", error);
       setGroups([]);
       setLoading(false);
       return;
     }
 
-    setGroups(data || []);
+    const loadedGroups = data || [];
 
-    if (!groupId && data && data.length > 0) {
-      setGroupId(data[0].id);
+    setGroups(loadedGroups);
+
+    if (!groupId && loadedGroups.length > 0) {
+      setGroupId(loadedGroups[0].id);
     }
 
     setLoading(false);
   }
 
-  // =========================================================
-  // JOGADORES
-  // =========================================================
+  /* =====================================================
+     CARREGAR JOGADORES
+  ===================================================== */
 
   async function loadPlayers(id: string) {
-    if (!id) return;
+    if (!id) {
+      setPlayers([]);
+      return;
+    }
 
     setLoadingPlayers(true);
 
@@ -245,12 +232,10 @@ export default function Admin() {
       .from("player_overalls")
       .select("*")
       .eq("group_id", id)
-      .order("overall", {
-        ascending: false,
-      });
+      .order("overall", { ascending: false });
 
     if (error) {
-      console.error(error);
+      console.error("Erro ao carregar jogadores:", error);
       setPlayers([]);
     } else {
       setPlayers(data || []);
@@ -259,30 +244,125 @@ export default function Admin() {
     setLoadingPlayers(false);
   }
 
-  // =========================================================
-  // RACHA DE HOJE
-  // =========================================================
+  /* =====================================================
+     DATA LOCAL
+  ===================================================== */
+
+  function getToday() {
+    const now = new Date();
+
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+  }
+
+  /* =====================================================
+     CARREGAR PRESENÇA
+  ===================================================== */
+
+  async function loadAttendance(rachaId: string) {
+    const { data, error } = await supabase
+      .from("racha_attendance")
+      .select("*")
+      .eq("racha_id", rachaId);
+
+    if (error) {
+      console.error("Erro ao carregar presença:", error);
+      setAttendance([]);
+      setPresentPlayers([]);
+      return;
+    }
+
+    const rows = data || [];
+
+    setAttendance(rows);
+
+    setPresentPlayers(
+      rows
+        .filter((row: Attendance) => row.present)
+        .map((row: Attendance) => row.player_id)
+    );
+  }
+
+  /* =====================================================
+     CARREGAR JOGO
+  ===================================================== */
+
+  async function loadGame(game: Game | null) {
+    if (!game) {
+      setCurrentGame(null);
+      setTeams([]);
+      setGamePlayers([]);
+      return;
+    }
+
+    setCurrentGame(game);
+
+    const { data: loadedTeams, error: teamsError } =
+      await supabase
+        .from("racha_teams")
+        .select("*")
+        .eq("game_id", game.id)
+        .order("name");
+
+    if (teamsError) {
+      console.error("Erro ao carregar times:", teamsError);
+    }
+
+    const {
+      data: loadedPlayers,
+      error: playersError,
+    } = await supabase
+      .from("racha_game_players")
+      .select("*")
+      .eq("game_id", game.id);
+
+    if (playersError) {
+      console.error(
+        "Erro ao carregar jogadores do jogo:",
+        playersError
+      );
+    }
+
+    setTeams(loadedTeams || []);
+    setGamePlayers(loadedPlayers || []);
+
+    resetTimerForGame(game.id);
+  }
+
+  /* =====================================================
+     CARREGAR RACHA DE HOJE
+  ===================================================== */
 
   async function loadTodayRacha(id: string) {
-    if (!id) return;
+    if (!id) {
+      setRacha(null);
+      setGames([]);
+      setCurrentGame(null);
+      setTeams([]);
+      setGamePlayers([]);
+      return;
+    }
 
     setLoadingRacha(true);
 
-    const { data: existingRacha, error } =
+    const today = getToday();
+
+    const { data: existingRacha, error: rachaError } =
       await supabase
         .from("rachas")
         .select("*")
         .eq("group_id", id)
-        .eq("played_on", getToday())
+        .eq("played_on", today)
         .eq("status", "open")
-        .order("created_at", {
-          ascending: false,
-        })
+        .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
 
-    if (error) {
-      console.error(error);
+    if (rachaError) {
+      console.error("Erro ao carregar racha:", rachaError);
       setLoadingRacha(false);
       return;
     }
@@ -293,9 +373,8 @@ export default function Admin() {
       setCurrentGame(null);
       setTeams([]);
       setGamePlayers([]);
+      setAttendance([]);
       setPresentPlayers([]);
-      setTimerSeconds(0);
-
       setLoadingRacha(false);
       return;
     }
@@ -303,122 +382,51 @@ export default function Admin() {
     setRacha(existingRacha);
 
     setPlayersPerTeam(
-      existingRacha.players_per_team
+      String(existingRacha.players_per_team || 5)
     );
 
-    // =======================================================
-    // PRESENÇA
-    // =======================================================
+    await loadAttendance(existingRacha.id);
 
-    const { data: attendance } =
-      await supabase
-        .from("racha_attendance")
-        .select("*")
-        .eq("racha_id", existingRacha.id);
-
-    const present =
-      (attendance || [])
-        .filter(
-          (item: Attendance) =>
-            item.present
-        )
-        .map(
-          (item: Attendance) =>
-            item.player_id
-        );
-
-    setPresentPlayers(present);
-
-    // =======================================================
-    // JOGOS
-    // =======================================================
-
-    const { data: loadedGames } =
+    const { data: loadedGames, error: gamesError } =
       await supabase
         .from("racha_games")
         .select("*")
-        .eq(
-          "racha_id",
-          existingRacha.id
-        )
-        .order("game_number", {
-          ascending: true,
-        });
+        .eq("racha_id", existingRacha.id)
+        .order("game_number", { ascending: true });
 
-    const gameData =
-      loadedGames || [];
-
-    setGames(gameData);
-
-    const openGame =
-      gameData.find(
-        (game: Game) =>
-          game.status === "open"
-      ) || null;
-
-    if (!openGame) {
+    if (gamesError) {
+      console.error("Erro ao carregar jogos:", gamesError);
+      setGames([]);
       setCurrentGame(null);
-      setTeams([]);
-      setGamePlayers([]);
-      setTimerSeconds(0);
-
       setLoadingRacha(false);
       return;
     }
 
-    setCurrentGame(openGame);
+    const gameList = loadedGames || [];
 
-    // =======================================================
-    // TIMER
-    // =======================================================
+    setGames(gameList);
 
-    const elapsed =
-      calculateTimerSeconds(openGame);
+    const openGame =
+      gameList.find(
+        (game: Game) => game.status === "open"
+      ) || null;
 
-    setTimerSeconds(elapsed);
-
-    // =======================================================
-    // TIMES
-    // =======================================================
-
-    const { data: loadedTeams } =
-      await supabase
-        .from("racha_teams")
-        .select("*")
-        .eq(
-          "game_id",
-          openGame.id
-        );
-
-    setTeams(loadedTeams || []);
-
-    // =======================================================
-    // JOGADORES
-    // =======================================================
-
-    const { data: loadedGamePlayers } =
-      await supabase
-        .from("racha_game_players")
-        .select("*")
-        .eq(
-          "game_id",
-          openGame.id
-        );
-
-    setGamePlayers(
-      loadedGamePlayers || []
-    );
+    await loadGame(openGame);
 
     setLoadingRacha(false);
   }
 
-  // =========================================================
-  // LOAD INICIAL
-  // =========================================================
+  /* =====================================================
+     LOAD INICIAL
+  ===================================================== */
 
   useEffect(() => {
     loadGroups();
   }, []);
+
+  /* =====================================================
+     TROCA DE GRUPO
+  ===================================================== */
 
   useEffect(() => {
     if (!groupId) return;
@@ -427,497 +435,660 @@ export default function Admin() {
     loadTodayRacha(groupId);
   }, [groupId]);
 
-  // =========================================================
-  // CRONÔMETRO
-  // =========================================================
+  /* =====================================================
+     TIMER
+  ===================================================== */
 
-  function calculateTimerSeconds(
-    game: Game
-  ) {
-    if (
-      game.timer_status !==
-        "running" ||
-      !game.timer_started_at
-    ) {
-      return game.timer_elapsed_seconds;
+  function getTimerStorageKey(gameId: string) {
+    return `racha-timer-${gameId}`;
+  }
+
+  function resetTimerForGame(gameId: string) {
+    if (typeof window === "undefined") return;
+
+    const key = getTimerStorageKey(gameId);
+    const saved = localStorage.getItem(key);
+
+    if (!saved) {
+      setDurationMinutes(DEFAULT_MINUTES);
+      setTimerSeconds(DEFAULT_MINUTES * 60);
+      setTimerStatus("idle");
+      return;
     }
 
-    const started =
-      new Date(
-        game.timer_started_at
-      ).getTime();
+    try {
+      const parsed = JSON.parse(saved);
 
-    const now =
-      Date.now();
+      const savedDuration =
+        Number(parsed.durationMinutes) ||
+        DEFAULT_MINUTES;
 
-    const extra = Math.floor(
-      (now - started) / 1000
+      const savedSeconds =
+        Number(parsed.timerSeconds);
+
+      const savedStatus =
+        parsed.timerStatus || "idle";
+
+      setDurationMinutes(savedDuration);
+      setTimerSeconds(
+        Number.isFinite(savedSeconds)
+          ? savedSeconds
+          : savedDuration * 60
+      );
+      setTimerStatus(savedStatus);
+    } catch {
+      setDurationMinutes(DEFAULT_MINUTES);
+      setTimerSeconds(DEFAULT_MINUTES * 60);
+      setTimerStatus("idle");
+    }
+  }
+
+  function saveTimer(
+    gameId: string,
+    status: TimerStatus,
+    seconds: number,
+    minutes: number
+  ) {
+    if (typeof window === "undefined") return;
+
+    localStorage.setItem(
+      getTimerStorageKey(gameId),
+      JSON.stringify({
+        durationMinutes: minutes,
+        timerSeconds: seconds,
+        timerStatus: status,
+      })
+    );
+  }
+
+  function changeDuration(value: number) {
+    if (timerStatus === "running") return;
+
+    const safeValue = Math.max(
+      1,
+      Math.min(180, value)
     );
 
-    return Math.min(
-      game.duration_minutes * 60,
-      game.timer_elapsed_seconds +
-        extra
+    setDurationMinutes(safeValue);
+
+    if (
+      timerStatus === "idle" ||
+      timerStatus === "finished"
+    ) {
+      const seconds = safeValue * 60;
+
+      setTimerSeconds(seconds);
+      setTimerStatus("idle");
+
+      if (currentGame) {
+        saveTimer(
+          currentGame.id,
+          "idle",
+          seconds,
+          safeValue
+        );
+      }
+    }
+  }
+
+  function startTimer() {
+    if (!currentGame) return;
+
+    let seconds = timerSeconds;
+
+    if (timerStatus === "finished" || seconds <= 0) {
+      seconds = durationMinutes * 60;
+      setTimerSeconds(seconds);
+    }
+
+    setTimerStatus("running");
+
+    saveTimer(
+      currentGame.id,
+      "running",
+      seconds,
+      durationMinutes
+    );
+  }
+
+  function pauseTimer() {
+    if (!currentGame) return;
+
+    setTimerStatus("paused");
+
+    saveTimer(
+      currentGame.id,
+      "paused",
+      timerSeconds,
+      durationMinutes
+    );
+  }
+
+  function resumeTimer() {
+    if (!currentGame) return;
+
+    setTimerStatus("running");
+
+    saveTimer(
+      currentGame.id,
+      "running",
+      timerSeconds,
+      durationMinutes
+    );
+  }
+
+  function finishTimer() {
+    if (!currentGame) return;
+
+    setTimerStatus("finished");
+    setTimerSeconds(0);
+
+    saveTimer(
+      currentGame.id,
+      "finished",
+      0,
+      durationMinutes
+    );
+  }
+
+  function restartTimer() {
+    if (!currentGame) return;
+
+    const seconds = durationMinutes * 60;
+
+    setTimerSeconds(seconds);
+    setTimerStatus("idle");
+
+    saveTimer(
+      currentGame.id,
+      "idle",
+      seconds,
+      durationMinutes
     );
   }
 
   useEffect(() => {
-    if (
-      !currentGame ||
-      currentGame.timer_status !==
-        "running"
-    ) {
-      return;
-    }
+    if (timerStatus !== "running") return;
 
-    const interval =
-      setInterval(() => {
-        const seconds =
-          calculateTimerSeconds(
-            currentGame
-          );
+    const interval = setInterval(() => {
+      setTimerSeconds((current) => {
+        if (current <= 1) {
+          if (currentGame) {
+            saveTimer(
+              currentGame.id,
+              "finished",
+              0,
+              durationMinutes
+            );
+          }
 
-        setTimerSeconds(seconds);
+          setTimerStatus("finished");
 
-        if (
-          seconds >=
-          currentGame.duration_minutes *
-            60
-        ) {
-          finishTimerAutomatically();
+          return 0;
         }
-      }, 1000);
 
-    return () =>
-      clearInterval(interval);
-  }, [currentGame]);
+        const next = current - 1;
 
-  // =========================================================
-  // FORMATAR TIMER
-  // =========================================================
-
-  function formatTime(seconds: number) {
-    const minutes =
-      Math.floor(seconds / 60);
-
-    const secs =
-      seconds % 60;
-
-    return `${String(
-      minutes
-    ).padStart(2, "0")}:${String(
-      secs
-    ).padStart(2, "0")}`;
-  }
-
-  // =========================================================
-  // INICIAR TIMER
-  // =========================================================
-
-  async function startTimer() {
-    if (!currentGame) return;
-
-    const elapsed =
-      timerSeconds;
-
-    if (
-      elapsed >=
-      currentGame.duration_minutes *
-        60
-    ) {
-      return;
-    }
-
-    const { error } =
-      await supabase
-        .from("racha_games")
-        .update({
-          timer_status:
+        if (currentGame) {
+          saveTimer(
+            currentGame.id,
             "running",
-          timer_started_at:
-            new Date().toISOString(),
-          timer_elapsed_seconds:
-            elapsed,
-        })
-        .eq(
-          "id",
-          currentGame.id
-        );
+            next,
+            durationMinutes
+          );
+        }
 
-    if (error) {
-      console.error(error);
-      alert(
-        "Não foi possível iniciar o cronômetro."
-      );
-      return;
-    }
+        return next;
+      });
+    }, 1000);
 
-    setCurrentGame({
-      ...currentGame,
-      timer_status:
-        "running",
-      timer_started_at:
-        new Date().toISOString(),
-      timer_elapsed_seconds:
-        elapsed,
-    });
+    return () => clearInterval(interval);
+  }, [
+    timerStatus,
+    currentGame,
+    durationMinutes,
+  ]);
+
+  function formatTimer(seconds: number) {
+    const minutes = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+
+    return `${String(minutes).padStart(
+      2,
+      "0"
+    )}:${String(secs).padStart(2, "0")}`;
   }
 
-  // =========================================================
-  // PAUSAR TIMER
-  // =========================================================
-
-  async function pauseTimer() {
-    if (!currentGame) return;
-
-    const elapsed =
-      calculateTimerSeconds(
-        currentGame
-      );
-
-    const { error } =
-      await supabase
-        .from("racha_games")
-        .update({
-          timer_status:
-            "paused",
-          timer_started_at:
-            null,
-          timer_elapsed_seconds:
-            elapsed,
-        })
-        .eq(
-          "id",
-          currentGame.id
-        );
-
-    if (error) {
-      console.error(error);
-      return;
-    }
-
-    setTimerSeconds(elapsed);
-
-    setCurrentGame({
-      ...currentGame,
-      timer_status:
-        "paused",
-      timer_started_at:
-        null,
-      timer_elapsed_seconds:
-        elapsed,
-    });
-  }
-
-  // =========================================================
-  // FINALIZAR TIMER
-  // =========================================================
-
-  async function finishTimer() {
-    if (!currentGame) return;
-
-    const confirmed =
-      confirm(
-        "Deseja finalizar o tempo desta partida?"
-      );
-
-    if (!confirmed) return;
-
-    const elapsed =
-      calculateTimerSeconds(
-        currentGame
-      );
-
-    const { error } =
-      await supabase
-        .from("racha_games")
-        .update({
-          timer_status:
-            "finished",
-          timer_started_at:
-            null,
-          timer_elapsed_seconds:
-            Math.min(
-              elapsed,
-              currentGame.duration_minutes *
-                60
-            ),
-        })
-        .eq(
-          "id",
-          currentGame.id
-        );
-
-    if (error) {
-      console.error(error);
-      return;
-    }
-
-    const finalSeconds =
-      Math.min(
-        elapsed,
-        currentGame.duration_minutes *
-          60
-      );
-
-    setTimerSeconds(
-      finalSeconds
-    );
-
-    setCurrentGame({
-      ...currentGame,
-      timer_status:
-        "finished",
-      timer_started_at:
-        null,
-      timer_elapsed_seconds:
-        finalSeconds,
-    });
-  }
-
-  // =========================================================
-  // FINALIZAR AUTOMATICAMENTE
-  // =========================================================
-
-  async function finishTimerAutomatically() {
-    if (!currentGame) return;
-
-    if (
-      currentGame.timer_status !==
-      "running"
-    ) {
-      return;
-    }
-
-    const total =
-      currentGame.duration_minutes *
-      60;
-
-    await supabase
-      .from("racha_games")
-      .update({
-        timer_status:
-          "finished",
-        timer_started_at:
-          null,
-        timer_elapsed_seconds:
-          total,
-      })
-      .eq(
-        "id",
-        currentGame.id
-      );
-
-    setTimerSeconds(total);
-
-    setCurrentGame({
-      ...currentGame,
-      timer_status:
-        "finished",
-      timer_started_at:
-        null,
-      timer_elapsed_seconds:
-        total,
-    });
-  }
-
-  // =========================================================
-  // CRIAR GRUPO
-  // =========================================================
+  /* =====================================================
+     CRIAR GRUPO
+  ===================================================== */
 
   async function addGroup(
     e: React.FormEvent
   ) {
     e.preventDefault();
 
-    const name =
-      groupName.trim();
+    const name = groupName.trim();
 
     if (!name) return;
 
     const {
       data: { user },
-    } =
-      await supabase.auth.getUser();
+    } = await supabase.auth.getUser();
 
     if (!user) return;
 
-    const { data, error } =
-      await supabase
-        .from("groups")
-        .insert({
-          name,
-          owner_id:
-            user.id,
-        })
-        .select()
-        .single();
+    const { data, error } = await supabase
+      .from("groups")
+      .insert({
+        name,
+        owner_id: user.id,
+      })
+      .select()
+      .single();
 
     if (error) {
-      alert(
-        "Não foi possível criar o grupo."
-      );
+      console.error("Erro ao criar grupo:", error);
+      alert("Não foi possível criar o grupo.");
       return;
     }
 
-    setGroupName("");
-
-    await loadGroups();
-
     if (data) {
+      setGroupName("");
+
+      await loadGroups();
+
       setGroupId(data.id);
+
+      await loadPlayers(data.id);
+      await loadTodayRacha(data.id);
     }
   }
 
-  // =========================================================
-  // ADICIONAR JOGADOR
-  // =========================================================
+  /* =====================================================
+     ADICIONAR JOGADOR
+  ===================================================== */
 
   async function addPlayer(
     e: React.FormEvent
   ) {
     e.preventDefault();
 
-    const name =
-      newPlayer.trim();
+    const name = newPlayer.trim();
 
-    if (
-      !name ||
-      !groupId
-    ) {
-      return;
-    }
+    if (!name || !groupId) return;
 
-    const { error } =
-      await supabase
-        .from("players")
-        .insert({
-          group_id:
-            groupId,
-          name,
-        });
+    const {
+      data: createdPlayer,
+      error,
+    } = await supabase
+      .from("players")
+      .insert({
+        group_id: groupId,
+        name,
+      })
+      .select()
+      .single();
 
     if (error) {
+      console.error(
+        "Erro ao adicionar jogador:",
+        error
+      );
+
       alert(
         "Não foi possível adicionar o jogador."
       );
+
       return;
     }
 
     setNewPlayer("");
 
-    await loadPlayers(
-      groupId
-    );
+    await loadPlayers(groupId);
+
+    /* =================================================
+       SE JÁ EXISTE RACHA ABERTO,
+       ADICIONA AUTOMATICAMENTE À PRESENÇA
+    ================================================= */
+
+    if (racha && createdPlayer) {
+      const { error: attendanceError } =
+        await supabase
+          .from("racha_attendance")
+          .upsert(
+            {
+              racha_id: racha.id,
+              player_id: createdPlayer.id,
+              present: true,
+            },
+            {
+              onConflict:
+                "racha_id,player_id",
+            }
+          );
+
+      if (attendanceError) {
+        console.error(
+          "Erro ao adicionar presença:",
+          attendanceError
+        );
+      }
+
+      await loadAttendance(racha.id);
+    }
   }
 
-  // =========================================================
-  // PRESENÇA
-  // =========================================================
+  /* =====================================================
+     PRESENÇA
+  ===================================================== */
 
-  function togglePresent(
+  async function togglePresent(
     playerId: string
   ) {
-    if (racha) return;
-
-    setPresentPlayers(
-      (current) => {
-        if (
-          current.includes(
-            playerId
-          )
-        ) {
+    if (!racha) {
+      setPresentPlayers((current) => {
+        if (current.includes(playerId)) {
           return current.filter(
-            (id) =>
-              id !== playerId
+            (id) => id !== playerId
           );
         }
 
-        return [
-          ...current,
-          playerId,
-        ];
-      }
-    );
+        return [...current, playerId];
+      });
+
+      return;
+    }
+
+    const currentlyPresent =
+      presentPlayers.includes(playerId);
+
+    const newValue = !currentlyPresent;
+
+    const { error } = await supabase
+      .from("racha_attendance")
+      .upsert(
+        {
+          racha_id: racha.id,
+          player_id: playerId,
+          present: newValue,
+        },
+        {
+          onConflict:
+            "racha_id,player_id",
+        }
+      );
+
+    if (error) {
+      console.error(
+        "Erro ao alterar presença:",
+        error
+      );
+
+      alert(
+        "Não foi possível alterar a presença."
+      );
+
+      return;
+    }
+
+    await loadAttendance(racha.id);
   }
 
-  // =========================================================
-  // SORTEIO
-  // =========================================================
+  /* =====================================================
+     SORTEIO
+  ===================================================== */
 
   function shufflePlayers(
     list: Player[]
   ) {
-    const result =
-      [...list];
+    const shuffled = [...list];
 
     for (
-      let i =
-        result.length - 1;
+      let i = shuffled.length - 1;
       i > 0;
       i--
     ) {
-      const j =
-        Math.floor(
-          Math.random() *
-            (i + 1)
-        );
+      const j = Math.floor(
+        Math.random() * (i + 1)
+      );
 
       [
-        result[i],
-        result[j],
+        shuffled[i],
+        shuffled[j],
       ] = [
-        result[j],
-        result[i],
+        shuffled[j],
+        shuffled[i],
       ];
     }
 
-    return result;
+    return shuffled;
   }
 
-  // =========================================================
-  // INICIAR RACHA
-  // =========================================================
+  /* =====================================================
+     CRIAR TIMES PARA UM JOGO
+  ===================================================== */
+
+  async function createGame(
+    rachaData: Racha,
+    gameNumber: number
+  ) {
+    const selectedPlayers =
+      players.filter((player) =>
+        presentPlayers.includes(player.id)
+      );
+
+    if (selectedPlayers.length < 2) {
+      alert(
+        "É necessário ter pelo menos 2 jogadores presentes."
+      );
+
+      return null;
+    }
+
+    const perTeam = Math.max(
+      1,
+      Number(
+        rachaData.players_per_team
+      ) || 5
+    );
+
+    const numberOfTeams = Math.ceil(
+      selectedPlayers.length / perTeam
+    );
+
+    const { data: newGame, error: gameError } =
+      await supabase
+        .from("racha_games")
+        .insert({
+          racha_id: rachaData.id,
+          game_number: gameNumber,
+          status: "open",
+        })
+        .select()
+        .single();
+
+    if (gameError || !newGame) {
+      console.error(
+        "Erro ao criar jogo:",
+        gameError
+      );
+
+      alert(
+        "Não foi possível criar o jogo."
+      );
+
+      return null;
+    }
+
+    /* =================================================
+       CRIAR TIMES
+    ================================================= */
+
+    const teamRows = Array.from(
+      { length: numberOfTeams },
+      (_, index) => ({
+        game_id: newGame.id,
+        name: `Time ${index + 1}`,
+        color:
+          TEAM_COLORS[
+            index % TEAM_COLORS.length
+          ],
+      })
+    );
+
+    const {
+      data: newTeams,
+      error: teamsError,
+    } = await supabase
+      .from("racha_teams")
+      .insert(teamRows)
+      .select();
+
+    if (
+      teamsError ||
+      !newTeams ||
+      newTeams.length === 0
+    ) {
+      console.error(
+        "Erro ao criar times:",
+        teamsError
+      );
+
+      await supabase
+        .from("racha_games")
+        .delete()
+        .eq("id", newGame.id);
+
+      alert(
+        "Não foi possível criar os times."
+      );
+
+      return null;
+    }
+
+    /* =================================================
+       SORTEAR JOGADORES
+    ================================================= */
+
+    const shuffled =
+      shufflePlayers(selectedPlayers);
+
+    const playerRows = shuffled.map(
+      (player, index) => {
+        const teamIndex =
+          Math.floor(index / perTeam);
+
+        const team =
+          newTeams[teamIndex];
+
+        return {
+          game_id: newGame.id,
+          team_id: team?.id || null,
+          player_id: player.id,
+          role: "field" as const,
+        };
+      }
+    );
+
+    const {
+      data: createdPlayers,
+      error: playerError,
+    } = await supabase
+      .from("racha_game_players")
+      .insert(playerRows)
+      .select();
+
+    if (playerError) {
+      console.error(
+        "Erro ao registrar jogadores:",
+        playerError
+      );
+
+      await supabase
+        .from("racha_games")
+        .delete()
+        .eq("id", newGame.id);
+
+      alert(
+        "Não foi possível montar os times."
+      );
+
+      return null;
+    }
+
+    setGames((current) => [
+      ...current,
+      newGame,
+    ]);
+
+    setCurrentGame(newGame);
+    setTeams(newTeams);
+    setGamePlayers(
+      createdPlayers || []
+    );
+
+    restartTimer();
+
+    return newGame;
+  }
+
+  /* =====================================================
+     INICIAR RACHA
+  ===================================================== */
 
   async function startRacha() {
     if (!groupId) return;
 
-    if (
-      presentPlayers.length <
-      2
-    ) {
+    if (presentPlayers.length < 2) {
       alert(
-        "É necessário ter pelo menos 2 jogadores."
+        "Selecione pelo menos 2 jogadores."
       );
+
       return;
     }
 
-    setStartingRacha(
-      true
+    const perTeam = Number(
+      playersPerTeam
     );
 
-    try {
-      const { data: newRacha, error } =
-        await supabase
-          .from("rachas")
-          .insert({
-            group_id:
-              groupId,
-            played_on:
-              getToday(),
-            status:
-              "open",
-            players_per_team:
-              playersPerTeam,
-          })
-          .select()
-          .single();
+    if (
+      !Number.isFinite(perTeam) ||
+      perTeam < 1
+    ) {
+      alert(
+        "Informe uma quantidade válida de jogadores por time."
+      );
 
-      if (
-        error ||
-        !newRacha
-      ) {
-        console.error(error);
+      return;
+    }
+
+    setStartingRacha(true);
+
+    try {
+      /* ===============================================
+         CRIAR RACHA
+      =============================================== */
+
+      const {
+        data: newRacha,
+        error: rachaError,
+      } = await supabase
+        .from("rachas")
+        .insert({
+          group_id: groupId,
+          played_on: getToday(),
+          status: "open",
+          players_per_team: perTeam,
+        })
+        .select()
+        .single();
+
+      if (rachaError || !newRacha) {
+        console.error(
+          "Erro ao criar racha:",
+          rachaError
+        );
 
         alert(
           "Não foi possível criar o racha."
@@ -926,379 +1097,194 @@ export default function Admin() {
         return;
       }
 
+      setRacha(newRacha);
+
+      /* ===============================================
+         REGISTRAR PRESENÇA
+      =============================================== */
+
       const attendanceRows =
         presentPlayers.map(
           (playerId) => ({
-            racha_id:
-              newRacha.id,
-            player_id:
-              playerId,
+            racha_id: newRacha.id,
+            player_id: playerId,
             present: true,
           })
         );
 
       const {
-        error:
-          attendanceError,
-      } =
-        await supabase
-          .from(
-            "racha_attendance"
-          )
-          .insert(
-            attendanceRows
-          );
+        error: attendanceError,
+      } = await supabase
+        .from("racha_attendance")
+        .insert(attendanceRows);
 
-      if (
-        attendanceError
-      ) {
+      if (attendanceError) {
         console.error(
+          "Erro ao registrar presença:",
           attendanceError
         );
-
-        await supabase
-          .from("rachas")
-          .delete()
-          .eq(
-            "id",
-            newRacha.id
-          );
-
-        alert(
-          "Não foi possível registrar a presença."
-        );
-
-        return;
       }
 
-      setRacha(
-        newRacha
+      await loadAttendance(
+        newRacha.id
       );
+
+      /* ===============================================
+         CRIAR PRIMEIRO JOGO
+      =============================================== */
 
       await createGame(
-        newRacha.id,
-        1,
-        presentPlayers
+        newRacha,
+        1
       );
+
+      await loadPlayers(groupId);
     } finally {
-      setStartingRacha(
-        false
-      );
+      setStartingRacha(false);
     }
   }
 
-  // =========================================================
-  // CRIAR JOGO
-  // =========================================================
-
-  async function createGame(
-    rachaId: string,
-    gameNumber: number,
-    playerIds: string[]
-  ) {
-    if (
-      playerIds.length <
-      2
-    ) {
-      alert(
-        "São necessários pelo menos 2 jogadores."
-      );
-      return false;
-    }
-
-    setStartingGame(
-      true
-    );
-
-    try {
-      const { data: newGame, error } =
-        await supabase
-          .from(
-            "racha_games"
-          )
-          .insert({
-            racha_id:
-              rachaId,
-            game_number:
-              gameNumber,
-            status:
-              "open",
-            duration_minutes:
-              gameDuration,
-            timer_elapsed_seconds:
-              0,
-            timer_status:
-              "stopped",
-          })
-          .select()
-          .single();
-
-      if (
-        error ||
-        !newGame
-      ) {
-        console.error(error);
-
-        alert(
-          "Não foi possível criar o jogo."
-        );
-
-        return false;
-      }
-
-      // =====================================================
-      // QUANTIDADE DE TIMES
-      // =====================================================
-
-      const numberOfTeams =
-        Math.ceil(
-          playerIds.length /
-            playersPerTeam
-        );
-
-      const teamRows =
-        Array.from(
-          {
-            length:
-              numberOfTeams,
-          },
-          (_, index) => ({
-            game_id:
-              newGame.id,
-            name:
-              `Time ${index + 1}`,
-            color:
-              TEAM_COLORS[
-                index %
-                  TEAM_COLORS.length
-              ],
-          })
-        );
-
-      const {
-        data: newTeams,
-        error:
-          teamsError,
-      } =
-        await supabase
-          .from(
-            "racha_teams"
-          )
-          .insert(
-            teamRows
-          )
-          .select();
-
-      if (
-        teamsError ||
-        !newTeams
-      ) {
-        console.error(
-          teamsError
-        );
-
-        await supabase
-          .from(
-            "racha_games"
-          )
-          .delete()
-          .eq(
-            "id",
-            newGame.id
-          );
-
-        alert(
-          "Não foi possível criar os times."
-        );
-
-        return false;
-      }
-
-      // =====================================================
-      // SORTEAR TODOS
-      // =====================================================
-
-      const selected =
-        players.filter(
-          (player) =>
-            playerIds.includes(
-              player.id
-            )
-        );
-
-      const shuffled =
-        shufflePlayers(
-          selected
-        );
-
-      const gamePlayerRows =
-        shuffled.map(
-          (
-            player,
-            index
-          ) => {
-            const teamIndex =
-              Math.floor(
-                index /
-                  playersPerTeam
-              );
-
-            const team =
-              newTeams[
-                teamIndex
-              ];
-
-            return {
-              game_id:
-                newGame.id,
-              team_id:
-                team.id,
-              player_id:
-                player.id,
-              role:
-                "field" as const,
-            };
-          }
-        );
-
-      const {
-        data:
-          createdPlayers,
-        error:
-          playersError,
-      } =
-        await supabase
-          .from(
-            "racha_game_players"
-          )
-          .insert(
-            gamePlayerRows
-          )
-          .select();
-
-      if (
-        playersError
-      ) {
-        console.error(
-          playersError
-        );
-
-        await supabase
-          .from(
-            "racha_games"
-          )
-          .delete()
-          .eq(
-            "id",
-            newGame.id
-          );
-
-        alert(
-          "Não foi possível montar os times."
-        );
-
-        return false;
-      }
-
-      setCurrentGame(
-        newGame
-      );
-
-      setGames(
-        (current) => [
-          ...current,
-          newGame,
-        ]
-      );
-
-      setTeams(
-        newTeams
-      );
-
-      setGamePlayers(
-        createdPlayers ||
-          []
-      );
-
-      setTimerSeconds(0);
-
-      return true;
-    } finally {
-      setStartingGame(
-        false
-      );
-    }
-  }
-
-  // =========================================================
-  // PRÓXIMO JOGO
-  // =========================================================
+  /* =====================================================
+     PRÓXIMO JOGO
+  ===================================================== */
 
   async function startNextGame() {
     if (!racha) return;
 
     if (
-      presentPlayers.length <
-      2
+      currentGame &&
+      currentGame.status === "open"
     ) {
       alert(
-        "São necessários pelo menos 2 jogadores."
+        "Finalize o jogo atual antes de iniciar o próximo."
       );
+
       return;
     }
 
-    const nextNumber =
-      games.length > 0
-        ? Math.max(
-            ...games.map(
-              (game) =>
-                game.game_number
-            )
-          ) + 1
-        : 1;
+    if (presentPlayers.length < 2) {
+      alert(
+        "É necessário ter pelo menos 2 jogadores presentes."
+      );
 
-    await createGame(
-      racha.id,
-      nextNumber,
-      presentPlayers
-    );
+      return;
+    }
 
-    await loadTodayRacha(
-      groupId
-    );
+    setStartingGame(true);
+
+    try {
+      const nextNumber =
+        games.length > 0
+          ? Math.max(
+              ...games.map(
+                (game) =>
+                  game.game_number
+              )
+            ) + 1
+          : 1;
+
+      await createGame(
+        racha,
+        nextNumber
+      );
+    } finally {
+      setStartingGame(false);
+    }
   }
 
-  // =========================================================
-  // MOVER JOGADOR DE TIME
-  // =========================================================
+  /* =====================================================
+     FINALIZAR JOGO
+  ===================================================== */
+
+  async function finishGame() {
+    if (!currentGame) return;
+
+    const confirmed = confirm(
+      `Finalizar o jogo ${currentGame.game_number}?`
+    );
+
+    if (!confirmed) return;
+
+    setFinishingGame(true);
+
+    try {
+      const { error } =
+        await supabase
+          .from("racha_games")
+          .update({
+            status: "finished",
+          })
+          .eq(
+            "id",
+            currentGame.id
+          );
+
+      if (error) {
+        console.error(
+          "Erro ao finalizar jogo:",
+          error
+        );
+
+        alert(
+          "Não foi possível finalizar o jogo."
+        );
+
+        return;
+      }
+
+      setTimerStatus("finished");
+
+      setGames((current) =>
+        current.map((game) =>
+          game.id === currentGame.id
+            ? {
+                ...game,
+                status: "finished",
+              }
+            : game
+        )
+      );
+
+      setCurrentGame({
+        ...currentGame,
+        status: "finished",
+      });
+
+      await loadPlayers(groupId);
+    } finally {
+      setFinishingGame(false);
+    }
+  }
+
+  /* =====================================================
+     TROCAR JOGADOR DE TIME
+  ===================================================== */
 
   async function movePlayer(
     gamePlayerId: string,
     newTeamId: string
   ) {
-    const selected =
+    if (!currentGame) return;
+
+    const player =
       gamePlayers.find(
-        (player) =>
-          player.id ===
-          gamePlayerId
+        (item) =>
+          item.id === gamePlayerId
       );
 
+    if (!player) return;
+
     if (
-      !selected ||
-      selected.team_id ===
-        newTeamId
+      player.team_id === newTeamId
     ) {
       return;
     }
 
     const { error } =
       await supabase
-        .from(
-          "racha_game_players"
-        )
+        .from("racha_game_players")
         .update({
-          team_id:
-            newTeamId,
+          team_id: newTeamId,
         })
         .eq(
           "id",
@@ -1307,72 +1293,257 @@ export default function Admin() {
 
     if (error) {
       console.error(
+        "Erro ao trocar jogador de time:",
         error
       );
 
       alert(
-        "Não foi possível mover o jogador."
+        "Não foi possível trocar o jogador de time."
       );
 
       return;
     }
 
-    setGamePlayers(
-      (current) =>
-        current.map(
-          (player) =>
-            player.id ===
-            gamePlayerId
-              ? {
-                  ...player,
-                  team_id:
-                    newTeamId,
-                }
-              : player
-        )
+    setGamePlayers((current) =>
+      current.map((item) =>
+        item.id === gamePlayerId
+          ? {
+              ...item,
+              team_id: newTeamId,
+            }
+          : item
+      )
     );
   }
 
-  // =========================================================
-  // JOGADOR
-  // =========================================================
+  /* =====================================================
+     JOGADOR SAI DO JOGO
+  ===================================================== */
+
+  async function playerLeavesGame(
+    gamePlayerId: string
+  ) {
+    const confirmed = confirm(
+      "Marcar este jogador como fora deste jogo?"
+    );
+
+    if (!confirmed) return;
+
+    const now =
+      new Date().toISOString();
+
+    const { error } =
+      await supabase
+        .from("racha_game_players")
+        .update({
+          left_at: now,
+        })
+        .eq(
+          "id",
+          gamePlayerId
+        );
+
+    if (error) {
+      console.error(
+        "Erro ao registrar saída:",
+        error
+      );
+
+      return;
+    }
+
+    setGamePlayers((current) =>
+      current.map((item) =>
+        item.id === gamePlayerId
+          ? {
+              ...item,
+              left_at: now,
+            }
+          : item
+      )
+    );
+  }
+
+  /* =====================================================
+     DEFINIR GOLEIRO
+  ===================================================== */
+
+  async function setGoalkeeper(
+    gamePlayerId: string,
+    teamId: string
+  ) {
+    if (!currentGame) return;
+
+    const currentGoalkeeper =
+      gamePlayers.find(
+        (player) =>
+          player.team_id === teamId &&
+          player.role === "goalkeeper"
+      );
+
+    /* ===============================================
+       TIRAR GOLEIRO ATUAL
+    =============================================== */
+
+    if (
+      currentGoalkeeper &&
+      currentGoalkeeper.id !==
+        gamePlayerId
+    ) {
+      const { error } =
+        await supabase
+          .from("racha_game_players")
+          .update({
+            role: "field",
+          })
+          .eq(
+            "id",
+            currentGoalkeeper.id
+          );
+
+      if (error) {
+        console.error(
+          "Erro ao retirar goleiro:",
+          error
+        );
+
+        return;
+      }
+    }
+
+    /* ===============================================
+       DEFINIR NOVO GOLEIRO
+    =============================================== */
+
+    const { error } =
+      await supabase
+        .from("racha_game_players")
+        .update({
+          role: "goalkeeper",
+        })
+        .eq(
+          "id",
+          gamePlayerId
+        );
+
+    if (error) {
+      console.error(
+        "Erro ao definir goleiro:",
+        error
+      );
+
+      return;
+    }
+
+    setGamePlayers((current) =>
+      current.map((player) => {
+        if (
+          player.id ===
+          gamePlayerId
+        ) {
+          return {
+            ...player,
+            role: "goalkeeper",
+          };
+        }
+
+        if (
+          currentGoalkeeper &&
+          player.id ===
+            currentGoalkeeper.id
+        ) {
+          return {
+            ...player,
+            role: "field",
+          };
+        }
+
+        return player;
+      })
+    );
+  }
+
+  /* =====================================================
+     ABRIR GOL
+  ===================================================== */
+
+  function openGoalForm() {
+    const firstOpponent =
+      teams.find(
+        (team) =>
+          team.id !==
+          getPlayerTeamId(
+            goalForm.scorer
+          )
+      );
+
+    setGoalForm({
+      scorer: "",
+      assist: "",
+      concededTeam:
+        firstOpponent?.id || "",
+    });
+
+    setShowGoalForm(true);
+  }
+
+  /* =====================================================
+     ENCONTRAR JOGADOR
+  ===================================================== */
 
   function getPlayer(
     playerId: string
   ) {
     return players.find(
       (player) =>
-        player.id ===
-        playerId
+        player.id === playerId
     );
   }
 
-  // =========================================================
-  // TIME
-  // =========================================================
+  /* =====================================================
+     ENCONTRAR JOGADOR DO JOGO
+  ===================================================== */
+
+  function getGamePlayer(
+    playerId: string
+  ) {
+    return gamePlayers.find(
+      (player) =>
+        player.player_id === playerId
+    );
+  }
+
+  /* =====================================================
+     TIME DO JOGADOR
+  ===================================================== */
+
+  function getPlayerTeamId(
+    playerId: string
+  ) {
+    return getGamePlayer(
+      playerId
+    )?.team_id || null;
+  }
 
   function getPlayerTeam(
     playerId: string
   ) {
-    const gp =
-      gamePlayers.find(
-        (player) =>
-          player.player_id ===
-          playerId
-      );
+    const teamId =
+      getPlayerTeamId(playerId);
 
-    if (!gp) return null;
+    if (!teamId) return null;
 
-    return teams.find(
-      (team) =>
-        team.id ===
-        gp.team_id
+    return (
+      teams.find(
+        (team) =>
+          team.id === teamId
+      ) || null
     );
   }
 
-  // =========================================================
-  // PLACAR
-  // =========================================================
+  /* =====================================================
+     PLACAR DO TIME
+  ===================================================== */
 
   function getTeamScore(
     teamId: string
@@ -1380,224 +1551,181 @@ export default function Admin() {
     return gamePlayers
       .filter(
         (player) =>
-          player.team_id ===
-          teamId
+          player.team_id === teamId
       )
       .reduce(
         (total, player) =>
-          total +
-          player.goals,
+          total + player.goals,
         0
       );
   }
 
-  // =========================================================
-  // GOLEIRO
-  // =========================================================
+  /* =====================================================
+     GOLEIRO DO TIME
+  ===================================================== */
 
   function getGoalkeeper(
     teamId: string
   ) {
     return gamePlayers.find(
       (player) =>
-        player.team_id ===
-          teamId &&
-        player.role ===
-          "goalkeeper"
+        player.team_id === teamId &&
+        player.role === "goalkeeper"
     );
   }
 
-  // =========================================================
-  // DEFINIR GOLEIRO
-  // =========================================================
-
-  async function setGoalkeeper(
-    gamePlayerId: string,
-    teamId: string
-  ) {
-    const current =
-      getGoalkeeper(
-        teamId
-      );
-
-    if (
-      current &&
-      current.id !==
-        gamePlayerId
-    ) {
-      await supabase
-        .from(
-          "racha_game_players"
-        )
-        .update({
-          role: "field",
-        })
-        .eq(
-          "id",
-          current.id
-        );
-    }
-
-    const selected =
-      gamePlayers.find(
-        (player) =>
-          player.id ===
-          gamePlayerId
-      );
-
-    if (!selected) return;
-
-    const newRole =
-      selected.role ===
-        "goalkeeper"
-        ? "field"
-        : "goalkeeper";
-
-    const { error } =
-      await supabase
-        .from(
-          "racha_game_players"
-        )
-        .update({
-          role:
-            newRole,
-        })
-        .eq(
-          "id",
-          gamePlayerId
-        );
-
-    if (error) {
-      console.error(
-        error
-      );
-      return;
-    }
-
-    setGamePlayers(
-      (currentPlayers) =>
-        currentPlayers.map(
-          (player) => {
-            if (
-              current &&
-              current.id ===
-                player.id &&
-              current.id !==
-                gamePlayerId
-            ) {
-              return {
-                ...player,
-                role: "field",
-              };
-            }
-
-            if (
-              player.id ===
-              gamePlayerId
-            ) {
-              return {
-                ...player,
-                role:
-                  newRole,
-              };
-            }
-
-            return player;
-          }
-        )
-    );
-  }
-
-  // =========================================================
-  // GOL
-  // =========================================================
+  /* =====================================================
+     REGISTRAR GOL
+  ===================================================== */
 
   async function registerGoal(
     e: React.FormEvent
   ) {
     e.preventDefault();
 
+    if (!currentGame) return;
+
+    if (!goalForm.scorer) {
+      alert(
+        "Selecione quem fez o gol."
+      );
+
+      return;
+    }
+
+    const scorer =
+      getGamePlayer(
+        goalForm.scorer
+      );
+
     if (
-      !currentGame ||
-      !goalForm.scorer
+      !scorer ||
+      !scorer.team_id
     ) {
+      alert(
+        "Jogador inválido."
+      );
+
+      return;
+    }
+
+    if (
+      goalForm.assist ===
+      goalForm.scorer
+    ) {
+      alert(
+        "O jogador não pode dar assistência para o próprio gol."
+      );
+
+      return;
+    }
+
+    if (
+      teams.length > 1 &&
+      !goalForm.concededTeam
+    ) {
+      alert(
+        "Selecione o time que sofreu o gol."
+      );
+
+      return;
+    }
+
+    if (
+      goalForm.concededTeam ===
+      scorer.team_id
+    ) {
+      alert(
+        "O time que marcou não pode ser o time que sofreu o gol."
+      );
+
       return;
     }
 
     setSavingGoal(true);
 
     try {
-      const scorer =
-        gamePlayers.find(
-          (player) =>
-            player.player_id ===
-            goalForm.scorer
-        );
+      /* ===============================================
+         GOL DO MARCADOR
+      =============================================== */
 
-      if (
-        !scorer ||
-        !scorer.team_id
-      ) {
-        return;
-      }
+      const newGoals =
+        scorer.goals + 1;
 
-      await supabase
-        .from(
-          "racha_game_players"
-        )
+      const {
+        error: scorerError,
+      } = await supabase
+        .from("racha_game_players")
         .update({
-          goals:
-            scorer.goals + 1,
+          goals: newGoals,
         })
         .eq(
           "id",
           scorer.id
         );
 
-      // assistência
-      if (
-        goalForm.assist
-      ) {
+      if (scorerError) {
+        console.error(
+          "Erro ao registrar gol:",
+          scorerError
+        );
+
+        alert(
+          "Não foi possível registrar o gol."
+        );
+
+        return;
+      }
+
+      /* ===============================================
+         ASSISTÊNCIA
+      =============================================== */
+
+      if (goalForm.assist) {
         const assister =
-          gamePlayers.find(
-            (player) =>
-              player.player_id ===
-              goalForm.assist
+          getGamePlayer(
+            goalForm.assist
           );
 
         if (assister) {
-          await supabase
+          const {
+            error: assistError,
+          } = await supabase
             .from(
               "racha_game_players"
             )
             .update({
               assists:
-                assister.assists +
-                1,
+                assister.assists + 1,
             })
             .eq(
               "id",
               assister.id
             );
+
+          if (assistError) {
+            console.error(
+              "Erro ao registrar assistência:",
+              assistError
+            );
+          }
         }
       }
 
-      // goleiro adversário
-      const opposingTeam =
-        teams.find(
-          (team) =>
-            team.id !==
-            scorer.team_id
-        );
+      /* ===============================================
+         GOL SOFRIDO PELO GOLEIRO
+      =============================================== */
 
-      if (opposingTeam) {
+      if (goalForm.concededTeam) {
         const goalkeeper =
           getGoalkeeper(
-            opposingTeam.id
+            goalForm.concededTeam
           );
 
         if (goalkeeper) {
-          await supabase
+          const {
+            error: goalkeeperError,
+          } = await supabase
             .from(
               "racha_game_players"
             )
@@ -1610,224 +1738,239 @@ export default function Admin() {
               "id",
               goalkeeper.id
             );
+
+          if (goalkeeperError) {
+            console.error(
+              "Erro ao registrar gol sofrido:",
+              goalkeeperError
+            );
+          }
         }
       }
 
-      setShowGoalForm(
-        false
+      /* ===============================================
+         ATUALIZAR TELA
+      =============================================== */
+
+      const {
+        data: refreshedPlayers,
+      } = await supabase
+        .from(
+          "racha_game_players"
+        )
+        .select("*")
+        .eq(
+          "game_id",
+          currentGame.id
+        );
+
+      setGamePlayers(
+        refreshedPlayers || []
       );
+
+      setShowGoalForm(false);
 
       setGoalForm({
         scorer: "",
         assist: "",
+        concededTeam: "",
       });
 
-      await loadTodayRacha(
-        groupId
-      );
-
-      await loadPlayers(
-        groupId
-      );
+      await loadPlayers(groupId);
     } finally {
-      setSavingGoal(
-        false
-      );
+      setSavingGoal(false);
     }
   }
 
-  // =========================================================
-  // FINALIZAR JOGO
-  // =========================================================
+  /* =====================================================
+     FINALIZAR RACHA
+  ===================================================== */
 
-  async function finishGame() {
-    if (!currentGame) return;
+  async function finishRacha() {
+    if (!racha) return;
 
-    const confirmed =
-      confirm(
-        `Finalizar o Jogo ${currentGame.game_number}?`
-      );
+    const confirmed = confirm(
+      "Tem certeza que deseja finalizar o racha de hoje?"
+    );
 
     if (!confirmed) return;
 
-    setFinishingGame(
-      true
-    );
+    /* ===============================================
+       FINALIZAR JOGO ABERTO
+    =============================================== */
 
-    try {
-      // se o timer estiver rodando,
-      // encerra o tempo também
-      const elapsed =
-        calculateTimerSeconds(
-          currentGame
+    if (
+      currentGame &&
+      currentGame.status === "open"
+    ) {
+      const {
+        error: gameError,
+      } = await supabase
+        .from("racha_games")
+        .update({
+          status: "finished",
+        })
+        .eq(
+          "id",
+          currentGame.id
         );
 
-      const { error } =
-        await supabase
-          .from(
-            "racha_games"
-          )
-          .update({
-            status:
-              "finished",
-            timer_status:
-              "finished",
-            timer_started_at:
-              null,
-            timer_elapsed_seconds:
-              Math.min(
-                elapsed,
-                currentGame.duration_minutes *
-                  60
-              ),
-          })
-          .eq(
-            "id",
-            currentGame.id
-          );
-
-      if (error) {
+      if (gameError) {
         console.error(
-          error
+          "Erro ao finalizar jogo:",
+          gameError
         );
 
         alert(
-          "Não foi possível finalizar o jogo."
+          "Não foi possível finalizar o jogo atual."
         );
 
         return;
       }
-
-      setCurrentGame(
-        null
-      );
-
-      setTeams([]);
-      setGamePlayers([]);
-      setTimerSeconds(0);
-
-      await loadPlayers(
-        groupId
-      );
-
-      await loadTodayRacha(
-        groupId
-      );
-    } finally {
-      setFinishingGame(
-        false
-      );
     }
-  }
 
-  // =========================================================
-  // FINALIZAR RACHA
-  // =========================================================
+    /* ===============================================
+       FINALIZAR RACHA
+    =============================================== */
 
-  async function finishRacha() {
-    if (
-      !racha ||
-      currentGame
-    ) {
+    const { error } =
+      await supabase
+        .from("rachas")
+        .update({
+          status: "finished",
+        })
+        .eq(
+          "id",
+          racha.id
+        );
+
+    if (error) {
+      console.error(
+        "Erro ao finalizar racha:",
+        error
+      );
+
+      alert(
+        "Não foi possível finalizar o racha."
+      );
+
       return;
     }
 
-    const confirmed =
-      confirm(
-        "Deseja realmente encerrar o racha de hoje?"
-      );
+    setRacha(null);
+    setGames([]);
+    setCurrentGame(null);
+    setTeams([]);
+    setGamePlayers([]);
+    setAttendance([]);
+    setPresentPlayers([]);
 
-    if (!confirmed) return;
-
-    setFinishingRacha(
-      true
+    setTimerStatus("idle");
+    setTimerSeconds(
+      DEFAULT_MINUTES * 60
     );
 
-    try {
-      const { error } =
-        await supabase
-          .from("rachas")
-          .update({
-            status:
-              "finished",
-          })
-          .eq(
-            "id",
-            racha.id
-          );
+    await loadPlayers(groupId);
+    await loadTodayRacha(groupId);
+  }
 
-      if (error) {
-        console.error(
-          error
-        );
+  /* =====================================================
+     LOGOUT
+  ===================================================== */
 
-        alert(
-          "Não foi possível encerrar o racha."
-        );
+  async function logout() {
+    await supabase.auth.signOut();
 
-        return;
-      }
+    location.href =
+      "/admin/login";
+  }
 
-      setRacha(null);
-      setGames([]);
-      setCurrentGame(null);
-      setTeams([]);
-      setGamePlayers([]);
-      setPresentPlayers([]);
-    } finally {
-      setFinishingRacha(
-        false
+  /* =====================================================
+     JOGADORES PRESENTES
+  ===================================================== */
+
+  const presentPlayerObjects =
+    useMemo(() => {
+      return players.filter(
+        (player) =>
+          presentPlayers.includes(
+            player.id
+          )
       );
-    }
-  }
+    }, [
+      players,
+      presentPlayers,
+    ]);
 
-  // =========================================================
-  // TOP
-  // =========================================================
+  /* =====================================================
+     ARILHEIRO DO JOGO
+  ===================================================== */
 
-  function getTopScorer() {
+  const topScorer = useMemo(() => {
+    if (!gamePlayers.length)
+      return null;
+
+    const sorted = [
+      ...gamePlayers,
+    ].sort(
+      (a, b) =>
+        b.goals - a.goals
+    );
+
+    const top = sorted[0];
+
+    if (!top || top.goals === 0)
+      return null;
+
+    return {
+      player: getPlayer(
+        top.player_id
+      ),
+      goals: top.goals,
+    };
+  }, [
+    gamePlayers,
+    players,
+  ]);
+
+  /* =====================================================
+     GARÇOM DO JOGO
+  ===================================================== */
+
+  const topAssist = useMemo(() => {
+    if (!gamePlayers.length)
+      return null;
+
+    const sorted = [
+      ...gamePlayers,
+    ].sort(
+      (a, b) =>
+        b.assists - a.assists
+    );
+
+    const top = sorted[0];
+
     if (
-      gamePlayers.length ===
-      0
+      !top ||
+      top.assists === 0
     ) {
       return null;
     }
 
-    const top =
-      [...gamePlayers].sort(
-        (a, b) =>
-          b.goals -
-          a.goals
-      )[0];
+    return {
+      player: getPlayer(
+        top.player_id
+      ),
+      assists: top.assists,
+    };
+  }, [
+    gamePlayers,
+    players,
+  ]);
 
-    return top.goals > 0
-      ? top
-      : null;
-  }
-
-  function getTopAssister() {
-    if (
-      gamePlayers.length ===
-      0
-    ) {
-      return null;
-    }
-
-    const top =
-      [...gamePlayers].sort(
-        (a, b) =>
-          b.assists -
-          a.assists
-      )[0];
-
-    return top.assists > 0
-      ? top
-      : null;
-  }
-
-  // =========================================================
-  // LOADING
-  // =========================================================
+  /* =====================================================
+     LOADING
+  ===================================================== */
 
   if (loading) {
     return (
@@ -1839,19 +1982,17 @@ export default function Admin() {
     );
   }
 
-  // =========================================================
-  // INTERFACE
-  // =========================================================
+  /* =====================================================
+     INTERFACE
+  ===================================================== */
 
   return (
     <main className="page">
-
-      {/* =====================================================
+      {/* =================================================
           HEADER
-      ===================================================== */}
+      ================================================= */}
 
       <header className="top">
-
         <div>
           <span className="badge">
             ⚽ Racha FC
@@ -1869,15 +2010,13 @@ export default function Admin() {
           <LogOut size={17} />
           Sair
         </button>
-
       </header>
 
-      {/* =====================================================
+      {/* =================================================
           GRUPO
-      ===================================================== */}
+      ================================================= */}
 
       <section className="toolbar">
-
         <select
           value={groupId}
           onChange={(e) =>
@@ -1886,29 +2025,23 @@ export default function Admin() {
             )
           }
         >
-          {groups.map(
-            (group) => (
-              <option
-                key={group.id}
-                value={group.id}
-              >
-                {group.name}
-              </option>
-            )
-          )}
+          {groups.map((group) => (
+            <option
+              key={group.id}
+              value={group.id}
+            >
+              {group.name}
+            </option>
+          ))}
         </select>
 
         <form
-          onSubmit={
-            addGroup
-          }
+          onSubmit={addGroup}
           className="inline"
         >
           <input
             placeholder="Novo grupo"
-            value={
-              groupName
-            }
+            value={groupName}
             onChange={(e) =>
               setGroupName(
                 e.target.value
@@ -1923,15 +2056,13 @@ export default function Admin() {
             Criar grupo
           </button>
         </form>
-
       </section>
 
-      {/* =====================================================
-          TABS
-      ===================================================== */}
+      {/* =================================================
+          MENU
+      ================================================= */}
 
       <nav className="tabs">
-
         <a className="active">
           Racha de hoje
         </a>
@@ -1943,32 +2074,74 @@ export default function Admin() {
         <a href="/admin/historico">
           Histórico
         </a>
-
       </nav>
 
-      {/* =====================================================
-          CONTEÚDO
-      ===================================================== */}
+      {/* =================================================
+          ADICIONAR JOGADOR
+          FICA SEMPRE VISÍVEL
+      ================================================= */}
+
+      <div className="card">
+        <h2>
+          <Users />
+          Adicionar jogador
+        </h2>
+
+        <form
+          onSubmit={addPlayer}
+          className="inline"
+        >
+          <input
+            type="text"
+            placeholder="Nome do jogador"
+            value={newPlayer}
+            onChange={(e) =>
+              setNewPlayer(
+                e.target.value
+              )
+            }
+          />
+
+          <button
+            className="button"
+            type="submit"
+            disabled={
+              !newPlayer.trim()
+            }
+          >
+            <Plus size={17} />
+            Adicionar jogador
+          </button>
+        </form>
+
+        {racha && (
+          <p className="muted">
+            O jogador será adicionado
+            automaticamente como
+            presente no racha de hoje.
+          </p>
+        )}
+      </div>
+
+      {/* =================================================
+          RACHA
+      ================================================= */}
 
       <section className="racha-area">
-
         {loadingRacha ? (
-
           <div className="card">
-            Carregando...
+            <p className="muted">
+              Carregando racha de hoje...
+            </p>
           </div>
-
         ) : !racha ? (
-
           <>
-            {/* =================================================
-                CONFIGURAÇÃO
-            ================================================= */}
+            {/* ===========================================
+                PRÉ-RACHA
+            =========================================== */}
 
             <div className="card">
-
               <div className="section-title">
-
                 <div>
                   <h2>
                     <CalendarDays />
@@ -1976,8 +2149,289 @@ export default function Admin() {
                   </h2>
 
                   <p className="muted">
-                    Selecione os jogadores
-                    presentes.
+                    Selecione quem está
+                    presente e defina
+                    quantos jogadores
+                    terão em cada time.
+                  </p>
+                </div>
+
+                <span className="present-count">
+                  {presentPlayers.length}{" "}
+                  presentes
+                </span>
+              </div>
+
+              {/* =========================================
+                  JOGADORES POR TIME
+              ========================================= */}
+
+              <div className="form-grid">
+                <label>
+                  <span>
+                    Jogadores por time
+                  </span>
+
+                  <select
+                    value={
+                      playersPerTeam
+                    }
+                    onChange={(e) =>
+                      setPlayersPerTeam(
+                        e.target.value
+                      )
+                    }
+                  >
+                    <option value="1">
+                      1 jogador
+                    </option>
+
+                    <option value="2">
+                      2 jogadores
+                    </option>
+
+                    <option value="3">
+                      3 jogadores
+                    </option>
+
+                    <option value="4">
+                      4 jogadores
+                    </option>
+
+                    <option value="5">
+                      5 jogadores
+                    </option>
+
+                    <option value="6">
+                      6 jogadores
+                    </option>
+
+                    <option value="7">
+                      7 jogadores
+                    </option>
+
+                    <option value="8">
+                      8 jogadores
+                    </option>
+
+                    <option value="9">
+                      9 jogadores
+                    </option>
+
+                    <option value="10">
+                      10 jogadores
+                    </option>
+
+                    <option value="11">
+                      11 jogadores
+                    </option>
+                  </select>
+                </label>
+              </div>
+
+              {/* =========================================
+                  PREVISÃO DOS TIMES
+              ========================================= */}
+
+              {presentPlayers.length >
+                0 && (
+                <div className="muted">
+                  Com{" "}
+                  <b>
+                    {presentPlayers.length}
+                  </b>{" "}
+                  jogadores e{" "}
+                  <b>
+                    {Number(
+                      playersPerTeam
+                    )}
+                  </b>{" "}
+                  por time, serão
+                  criados{" "}
+                  <b>
+                    {Math.ceil(
+                      presentPlayers.length /
+                        Number(
+                          playersPerTeam
+                        )
+                    )}
+                  </b>{" "}
+                  times.
+                </div>
+              )}
+
+              {/* =========================================
+                  PRESENÇA
+              ========================================= */}
+
+              {players.length === 0 ? (
+                <div className="empty-box">
+                  <Users size={32} />
+
+                  <b>
+                    Nenhum jogador
+                    cadastrado
+                  </b>
+
+                  <span>
+                    Adicione os jogadores
+                    acima antes de iniciar
+                    o racha.
+                  </span>
+                </div>
+              ) : (
+                <>
+                  <div className="attendance-list">
+                    {players.map(
+                      (player) => {
+                        const selected =
+                          presentPlayers.includes(
+                            player.id
+                          );
+
+                        return (
+                          <button
+                            key={
+                              player.id
+                            }
+                            type="button"
+                            className={`attendance-player ${
+                              selected
+                                ? "selected"
+                                : ""
+                            }`}
+                            onClick={() =>
+                              togglePresent(
+                                player.id
+                              )
+                            }
+                          >
+                            <div className="avatar">
+                              {player.photo_url ? (
+                                <img
+                                  src={
+                                    player.photo_url
+                                  }
+                                  alt={
+                                    player.name
+                                  }
+                                />
+                              ) : (
+                                player.name[0]?.toUpperCase()
+                              )}
+                            </div>
+
+                            <div className="attendance-info">
+                              <b>
+                                {
+                                  player.name
+                                }
+                              </b>
+
+                              <small>
+                                Overall{" "}
+                                {
+                                  player.overall
+                                }
+                              </small>
+                            </div>
+
+                            <div className="check">
+                              {selected
+                                ? "✓"
+                                : ""}
+                            </div>
+                          </button>
+                        );
+                      }
+                    )}
+                  </div>
+
+                  <div className="start-area">
+                    <button
+                      className="button start-button"
+                      type="button"
+                      onClick={
+                        startRacha
+                      }
+                      disabled={
+                        startingRacha ||
+                        presentPlayers.length <
+                          2
+                      }
+                    >
+                      <Shuffle
+                        size={18}
+                      />
+
+                      {startingRacha
+                        ? "Sorteando..."
+                        : "Sortear times e iniciar"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            {/* =================================================
+                CABEÇALHO DO RACHA
+            ================================================= */}
+
+            <div className="card">
+              <div className="section-title">
+                <div>
+                  <span className="badge">
+                    ⚽ RACHA DE HOJE
+                  </span>
+
+                  <h2>
+                    {racha.played_on}
+                  </h2>
+
+                  <p className="muted">
+                    {
+                      presentPlayers.length
+                    }{" "}
+                    jogadores presentes ·{" "}
+                    {games.length}{" "}
+                    {games.length === 1
+                      ? "jogo"
+                      : "jogos"}
+                  </p>
+                </div>
+
+                <button
+                  className="finish-button"
+                  type="button"
+                  onClick={
+                    finishRacha
+                  }
+                >
+                  <CheckCircle2
+                    size={17}
+                  />
+                  Finalizar racha
+                </button>
+              </div>
+            </div>
+
+            {/* =================================================
+                PRESENÇA / JOGADORES DO RACHA
+            ================================================= */}
+
+            <div className="card">
+              <div className="section-title">
+                <div>
+                  <h2>
+                    <Users />
+                    Jogadores presentes
+                  </h2>
+
+                  <p className="muted">
+                    Adicione ou retire
+                    jogadores do racha.
                   </p>
                 </div>
 
@@ -1987,189 +2441,19 @@ export default function Admin() {
                   }{" "}
                   presentes
                 </span>
-
               </div>
-
-              {/* =================================================
-                  JOGADORES POR TIME
-              ================================================= */}
-
-              <div className="players-per-team-box">
-
-                <div>
-
-                  <b>
-                    Jogadores por time
-                  </b>
-
-                  <small>
-                    O sistema criará quantos
-                    times forem necessários.
-                  </small>
-
-                </div>
-
-                <div className="number-control">
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setPlayersPerTeam(
-                        (value) =>
-                          Math.max(
-                            1,
-                            value - 1
-                          )
-                      )
-                    }
-                  >
-                    <Minus size={17} />
-                  </button>
-
-                  <strong>
-                    {
-                      playersPerTeam
-                    }
-                  </strong>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setPlayersPerTeam(
-                        (value) =>
-                          Math.min(
-                            15,
-                            value + 1
-                          )
-                      )
-                    }
-                  >
-                    <Plus size={17} />
-                  </button>
-
-                </div>
-
-              </div>
-
-              {/* =================================================
-                  DURAÇÃO
-              ================================================= */}
-
-              <div className="players-per-team-box">
-
-                <div>
-
-                  <b>
-                    Duração da partida
-                  </b>
-
-                  <small>
-                    Você poderá iniciar,
-                    pausar e finalizar o tempo.
-                  </small>
-
-                </div>
-
-                <div className="number-control">
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setGameDuration(
-                        (value) =>
-                          Math.max(
-                            1,
-                            value - 1
-                          )
-                      )
-                    }
-                  >
-                    <Minus size={17} />
-                  </button>
-
-                  <strong>
-                    {
-                      gameDuration
-                    }
-                    min
-                  </strong>
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setGameDuration(
-                        (value) =>
-                          Math.min(
-                            120,
-                            value + 1
-                          )
-                      )
-                    }
-                  >
-                    <Plus size={17} />
-                  </button>
-
-                </div>
-
-              </div>
-
-              {/* =================================================
-                  PREVISÃO
-              ================================================= */}
-
-              {presentPlayers.length >
-                0 && (
-
-                <div className="team-size-summary">
-
-                  <span>
-                    👥{" "}
-                    {
-                      presentPlayers.length
-                    }{" "}
-                    jogadores
-                  </span>
-
-                  <span>
-                    ⚽{" "}
-                    {Math.ceil(
-                      presentPlayers.length /
-                        playersPerTeam
-                    )}{" "}
-                    times
-                  </span>
-
-                  <span>
-                    ⏱️{" "}
-                    {
-                      gameDuration
-                    }{" "}
-                    min
-                  </span>
-
-                </div>
-              )}
-
-              {/* =================================================
-                  PRESENÇA
-              ================================================= */}
 
               <div className="attendance-list">
-
                 {players.map(
                   (player) => {
-
                     const selected =
                       presentPlayers.includes(
                         player.id
                       );
 
                     return (
-
                       <button
-                        key={
-                          player.id
-                        }
+                        key={player.id}
                         type="button"
                         className={`attendance-player ${
                           selected
@@ -2182,9 +2466,7 @@ export default function Admin() {
                           )
                         }
                       >
-
                         <div className="avatar">
-
                           {player.photo_url ? (
                             <img
                               src={
@@ -2197,15 +2479,11 @@ export default function Admin() {
                           ) : (
                             player.name[0]?.toUpperCase()
                           )}
-
                         </div>
 
                         <div className="attendance-info">
-
                           <b>
-                            {
-                              player.name
-                            }
+                            {player.name}
                           </b>
 
                           <small>
@@ -2214,7 +2492,6 @@ export default function Admin() {
                               player.overall
                             }
                           </small>
-
                         </div>
 
                         <div className="check">
@@ -2222,174 +2499,56 @@ export default function Admin() {
                             ? "✓"
                             : ""}
                         </div>
-
                       </button>
                     );
                   }
                 )}
-
               </div>
-
-              <div className="start-area">
-
-                <button
-                  className="button start-button"
-                  type="button"
-                  onClick={
-                    startRacha
-                  }
-                  disabled={
-                    startingRacha ||
-                    presentPlayers.length <
-                      2
-                  }
-                >
-
-                  <Shuffle size={18} />
-
-                  {startingRacha
-                    ? "Sorteando..."
-                    : "Sortear todos os times"}
-
-                </button>
-
-              </div>
-
             </div>
 
             {/* =================================================
-                ADICIONAR JOGADOR
+                HISTÓRICO DE JOGOS DO RACHA
             ================================================= */}
 
             <div className="card">
-
-              <h2>
-                <Users />
-                Jogadores
-              </h2>
-
-              <form
-                onSubmit={
-                  addPlayer
-                }
-                className="inline"
-              >
-
-                <input
-                  placeholder="Nome do jogador"
-                  value={
-                    newPlayer
-                  }
-                  onChange={(e) =>
-                    setNewPlayer(
-                      e.target
-                        .value
-                    )
-                  }
-                />
-
-                <button
-                  className="button"
-                  type="submit"
-                >
-                  Adicionar
-                </button>
-
-              </form>
-
-            </div>
-          </>
-
-        ) : (
-
-          <>
-            {/* =================================================
-                CABEÇALHO RACHA
-            ================================================= */}
-
-            <div className="card">
-
               <div className="section-title">
-
                 <div>
-
-                  <div className="live-label">
-                    <span className="live-dot" />
-                    RACHA EM ANDAMENTO
-                  </div>
-
                   <h2>
-                    ⚽ Racha de hoje
+                    <Trophy />
+                    Jogos do racha
                   </h2>
 
                   <p className="muted">
-                    {
-                      presentPlayers.length
-                    }{" "}
-                    jogadores ·{" "}
-                    {
-                      playersPerTeam
-                    }{" "}
-                    por time
+                    Cada jogo mantém suas
+                    próprias equipes e
+                    estatísticas.
                   </p>
-
                 </div>
-
-                <button
-                  className="finish-button"
-                  onClick={
-                    finishRacha
-                  }
-                  disabled={
-                    finishingRacha ||
-                    !!currentGame
-                  }
-                >
-                  <CheckCircle2
-                    size={17}
-                  />
-
-                  Encerrar racha
-                </button>
-
               </div>
 
-              {/* =================================================
-                  JOGOS
-              ================================================= */}
-
-              <div className="racha-games-list">
-
+              <div className="stats">
                 {games.map(
                   (game) => (
-
-                    <span
-                      key={
-                        game.id
-                      }
-                      className={
-                        currentGame?.id ===
-                        game.id
-                          ? "game-pill active"
-                          : "game-pill"
-                      }
+                    <div
+                      key={game.id}
                     >
-                      Jogo{" "}
-                      {
-                        game.game_number
-                      }
+                      <b>
+                        Jogo{" "}
+                        {
+                          game.game_number
+                        }
+                      </b>
 
-                      {game.status ===
-                      "finished"
-                        ? " ✓"
-                        : " • ao vivo"}
-                    </span>
-
+                      <span>
+                        {game.status ===
+                        "open"
+                          ? "Em andamento"
+                          : "Finalizado"}
+                      </span>
+                    </div>
                   )
                 )}
-
               </div>
-
             </div>
 
             {/* =================================================
@@ -2397,144 +2556,184 @@ export default function Admin() {
             ================================================= */}
 
             {currentGame ? (
-
               <>
+                {/* =============================================
+                    TIMER
+                ============================================= */}
 
-                {/* =================================================
-                    CRONÔMETRO
-                ================================================= */}
+                <div className="card">
+                  <div className="section-title">
+                    <div>
+                      <h2>
+                        <Clock />
+                        Jogo{" "}
+                        {
+                          currentGame.game_number
+                        }
+                      </h2>
 
-                <div className="card timer-card">
+                      <p className="muted">
+                        Configure o tempo
+                        deste jogo.
+                      </p>
+                    </div>
 
-                  <div className="live-label">
-
-                    <Clock
-                      size={17}
-                    />
-
-                    JOGO{" "}
-                    {
-                      currentGame.game_number
-                    }
-
+                    <strong
+                      style={{
+                        fontSize:
+                          "2.5rem",
+                        fontVariantNumeric:
+                          "tabular-nums",
+                      }}
+                    >
+                      {formatTimer(
+                        timerSeconds
+                      )}
+                    </strong>
                   </div>
 
-                  <div className="timer-display">
+                  <div className="form-grid">
+                    <label>
+                      <span>
+                        Duração do jogo
+                        (minutos)
+                      </span>
 
-                    {
-                      formatTime(
-                        Math.max(
-                          0,
-                          currentGame.duration_minutes *
-                            60 -
-                            timerSeconds
-                        )
-                      )
-                    }
-
+                      <input
+                        type="number"
+                        min="1"
+                        max="180"
+                        value={
+                          durationMinutes
+                        }
+                        disabled={
+                          timerStatus ===
+                          "running"
+                        }
+                        onChange={(e) =>
+                          changeDuration(
+                            Number(
+                              e.target
+                                .value
+                            )
+                          )
+                        }
+                      />
+                    </label>
                   </div>
 
-                  <div className="timer-info">
-
-                    Duração:{" "}
-                    {
-                      currentGame.duration_minutes
-                    }{" "}
-                    minutos
-
-                  </div>
-
-                  <div className="timer-actions">
-
-                    {currentGame.timer_status !==
-                      "finished" && (
-
-                      <>
-                        {currentGame.timer_status ===
-                          "running" ? (
-
-                          <button
-                            className="button"
-                            type="button"
-                            onClick={
-                              pauseTimer
-                            }
-                          >
-                            <Pause
-                              size={17}
-                            />
-                            Pausar
-                          </button>
-
-                        ) : (
-
-                          <button
-                            className="button"
-                            type="button"
-                            onClick={
-                              startTimer
-                            }
-                          >
-                            <Play
-                              size={17}
-                            />
-
-                            {currentGame.timer_status ===
-                            "paused"
-                              ? "Continuar"
-                              : "Iniciar tempo"}
-                          </button>
-
-                        )}
-
-                        <button
-                          className="finish-button"
-                          type="button"
-                          onClick={
-                            finishTimer
-                          }
-                        >
-                          <Square
-                            size={16}
-                          />
-                          Finalizar tempo
-                        </button>
-
-                      </>
+                  <div className="score-actions">
+                    {timerStatus ===
+                      "idle" && (
+                      <button
+                        className="button"
+                        type="button"
+                        onClick={
+                          startTimer
+                        }
+                      >
+                        <Play
+                          size={17}
+                        />
+                        Iniciar tempo
+                      </button>
                     )}
 
-                    {currentGame.timer_status ===
-                      "finished" && (
-
-                      <div className="goalkeeper-label">
-                        ⏱️ Tempo da partida
-                        finalizado
-                      </div>
-
+                    {timerStatus ===
+                      "running" && (
+                      <button
+                        className="button"
+                        type="button"
+                        onClick={
+                          pauseTimer
+                        }
+                      >
+                        <Pause
+                          size={17}
+                        />
+                        Pausar
+                      </button>
                     )}
 
+                    {timerStatus ===
+                      "paused" && (
+                      <button
+                        className="button"
+                        type="button"
+                        onClick={
+                          resumeTimer
+                        }
+                      >
+                        <Play
+                          size={17}
+                        />
+                        Continuar
+                      </button>
+                    )}
+
+                    <button
+                      className="ghost"
+                      type="button"
+                      onClick={
+                        restartTimer
+                      }
+                    >
+                      <RotateCcw
+                        size={17}
+                      />
+                      Reiniciar
+                    </button>
+
+                    {timerStatus !==
+                      "finished" && (
+                      <button
+                        className="finish-button"
+                        type="button"
+                        onClick={
+                          finishTimer
+                        }
+                      >
+                        <CheckCircle2
+                          size={17}
+                        />
+                        Encerrar tempo
+                      </button>
+                    )}
                   </div>
 
+                  {timerStatus ===
+                    "finished" && (
+                    <p className="muted">
+                      ⏱️ Tempo encerrado.
+                      Agora você pode
+                      finalizar o jogo.
+                    </p>
+                  )}
                 </div>
 
-                {/* =================================================
+                {/* =============================================
                     PLACAR
-                ================================================= */}
+                ============================================= */}
 
                 <div className="score-card">
+                  <div className="live-label">
+                    <span className="live-dot" />
+
+                    {currentGame.status ===
+                    "open"
+                      ? "JOGO EM ANDAMENTO"
+                      : "JOGO FINALIZADO"}
+                  </div>
 
                   <div className="scoreboard">
-
                     {teams.map(
                       (team) => (
-
                         <div
                           className="score-team"
                           key={
                             team.id
                           }
                         >
-
                           <span
                             className="team-color"
                             style={{
@@ -2550,80 +2749,88 @@ export default function Admin() {
                           </b>
 
                           <strong>
-                            {
-                              getTeamScore(
-                                team.id
-                              )
-                            }
+                            {getTeamScore(
+                              team.id
+                            )}
                           </strong>
-
                         </div>
-
                       )
                     )}
-
                   </div>
 
                   <div className="score-actions">
+                    {currentGame.status ===
+                      "open" && (
+                      <>
+                        <button
+                          className="button goal-button"
+                          type="button"
+                          onClick={
+                            openGoalForm
+                          }
+                        >
+                          <Plus
+                            size={18}
+                          />
+                          Registrar gol
+                        </button>
 
-                    <button
-                      className="button goal-button"
-                      onClick={
-                        () =>
-                          setShowGoalForm(
-                            true
-                          )
-                      }
-                    >
-                      <Plus
-                        size={18}
-                      />
-                      Registrar gol
-                    </button>
+                        <button
+                          className="finish-button"
+                          type="button"
+                          onClick={
+                            finishGame
+                          }
+                          disabled={
+                            finishingGame
+                          }
+                        >
+                          <CheckCircle2
+                            size={17}
+                          />
 
-                    <button
-                      className="finish-button"
-                      onClick={
-                        finishGame
-                      }
-                      disabled={
-                        finishingGame
-                      }
-                    >
-                      <CheckCircle2
-                        size={17}
-                      />
-
-                      Finalizar jogo
-                    </button>
-
+                          {finishingGame
+                            ? "Finalizando..."
+                            : "Finalizar jogo"}
+                        </button>
+                      </>
+                    )}
                   </div>
-
                 </div>
 
-                {/* =================================================
-                    GOL
-                ================================================= */}
+                {/* =============================================
+                    REGISTRAR GOL
+                ============================================= */}
 
                 {showGoalForm && (
+                  <div className="card goal-form-card">
+                    <div className="section-title">
+                      <div>
+                        <h2>
+                          <Target />
+                          Registrar gol
+                        </h2>
 
-                  <div className="card">
-
-                    <h2>
-                      <Target />
-                      Registrar gol
-                    </h2>
+                        <p className="muted">
+                          Informe quem marcou,
+                          quem deu a
+                          assistência e qual
+                          time sofreu o gol.
+                        </p>
+                      </div>
+                    </div>
 
                     <form
                       onSubmit={
                         registerGoal
                       }
                     >
-
                       <div className="form-grid">
+                        {/* ===================================
+                            MARCADOR
+                        =================================== */}
 
                         <label>
-
                           <span>
                             Quem fez o gol?
                           </span>
@@ -2632,32 +2839,61 @@ export default function Admin() {
                             value={
                               goalForm.scorer
                             }
-                            onChange={(e) =>
+                            onChange={(
+                              e
+                            ) => {
+                              const scorerId =
+                                e.target
+                                  .value;
+
+                              const scorerTeam =
+                                getPlayerTeamId(
+                                  scorerId
+                                );
+
+                              const firstOpponent =
+                                teams.find(
+                                  (
+                                    team
+                                  ) =>
+                                    team.id !==
+                                    scorerTeam
+                                );
+
                               setGoalForm(
-                                (current) => ({
+                                (
+                                  current
+                                ) => ({
                                   ...current,
                                   scorer:
-                                    e.target
-                                      .value,
+                                    scorerId,
+                                  concededTeam:
+                                    firstOpponent?.id ||
+                                    "",
                                 })
-                              )
-                            }
+                              );
+                            }}
                           >
-
                             <option value="">
-                              Selecionar
+                              Selecionar jogador
                             </option>
 
                             {gamePlayers.map(
                               (gp) => {
-
                                 const player =
                                   getPlayer(
                                     gp.player_id
                                   );
 
-                                if (!player)
+                                if (
+                                  !player
+                                )
                                   return null;
+
+                                const team =
+                                  getPlayerTeam(
+                                    player.id
+                                  );
 
                                 return (
                                   <option
@@ -2670,18 +2906,23 @@ export default function Admin() {
                                   >
                                     {
                                       player.name
+                                    }{" "}
+                                    —{" "}
+                                    {
+                                      team?.name
                                     }
                                   </option>
                                 );
                               }
                             )}
-
                           </select>
-
                         </label>
 
-                        <label>
+                        {/* ===================================
+                            ASSISTÊNCIA
+                        =================================== */}
 
+                        <label>
                           <span>
                             Assistência
                           </span>
@@ -2690,9 +2931,13 @@ export default function Admin() {
                             value={
                               goalForm.assist
                             }
-                            onChange={(e) =>
+                            onChange={(
+                              e
+                            ) =>
                               setGoalForm(
-                                (current) => ({
+                                (
+                                  current
+                                ) => ({
                                   ...current,
                                   assist:
                                     e.target
@@ -2701,55 +2946,135 @@ export default function Admin() {
                               )
                             }
                           >
-
                             <option value="">
                               Sem assistência
                             </option>
 
-                            {gamePlayers.map(
-                              (gp) => {
+                            {gamePlayers
+                              .filter(
+                                (
+                                  gp
+                                ) =>
+                                  gp.player_id !==
+                                  goalForm.scorer
+                              )
+                              .map(
+                                (
+                                  gp
+                                ) => {
+                                  const player =
+                                    getPlayer(
+                                      gp.player_id
+                                    );
 
-                                const player =
-                                  getPlayer(
-                                    gp.player_id
+                                  if (
+                                    !player
+                                  )
+                                    return null;
+
+                                  return (
+                                    <option
+                                      key={
+                                        gp.id
+                                      }
+                                      value={
+                                        player.id
+                                      }
+                                    >
+                                      {
+                                        player.name
+                                      }
+                                    </option>
                                   );
+                                }
+                              )}
+                          </select>
+                        </label>
 
-                                if (!player)
-                                  return null;
+                        {/* ===================================
+                            TIME QUE SOFREU
+                        =================================== */}
 
-                                return (
+                        <label>
+                          <span>
+                            Time que sofreu o gol
+                          </span>
+
+                          <select
+                            value={
+                              goalForm.concededTeam
+                            }
+                            onChange={(
+                              e
+                            ) =>
+                              setGoalForm(
+                                (
+                                  current
+                                ) => ({
+                                  ...current,
+                                  concededTeam:
+                                    e.target
+                                      .value,
+                                })
+                              )
+                            }
+                          >
+                            <option value="">
+                              Selecionar time
+                            </option>
+
+                            {teams
+                              .filter(
+                                (
+                                  team
+                                ) =>
+                                  team.id !==
+                                  getPlayerTeamId(
+                                    goalForm.scorer
+                                  )
+                              )
+                              .map(
+                                (
+                                  team
+                                ) => (
                                   <option
                                     key={
-                                      gp.id
+                                      team.id
                                     }
                                     value={
-                                      player.id
+                                      team.id
                                     }
                                   >
                                     {
-                                      player.name
+                                      team.name
                                     }
                                   </option>
-                                );
-                              }
-                            )}
-
+                                )
+                              )}
                           </select>
-
                         </label>
-
                       </div>
 
                       <div className="form-actions">
-
                         <button
                           type="button"
                           className="ghost"
-                          onClick={() =>
+                          onClick={() => {
                             setShowGoalForm(
                               false
-                            )
-                          }
+                            );
+
+                            setGoalForm(
+                              {
+                                scorer:
+                                  "",
+                                assist:
+                                  "",
+                                concededTeam:
+                                  "",
+                              }
+                            );
+                          }}
                         >
                           Cancelar
                         </button>
@@ -2769,23 +3094,18 @@ export default function Admin() {
                             ? "Salvando..."
                             : "Confirmar gol"}
                         </button>
-
                       </div>
-
                     </form>
-
                   </div>
                 )}
 
-                {/* =================================================
+                {/* =============================================
                     TIMES
-                ================================================= */}
+                ============================================= */}
 
                 <div className="teams-grid">
-
                   {teams.map(
                     (team) => {
-
                       const teamPlayers =
                         gamePlayers.filter(
                           (player) =>
@@ -2799,18 +3119,14 @@ export default function Admin() {
                         );
 
                       return (
-
                         <div
                           className="card team-card"
                           key={
                             team.id
                           }
                         >
-
                           <div className="team-header">
-
                             <div>
-
                               <span
                                 className="team-color"
                                 style={{
@@ -2824,43 +3140,48 @@ export default function Admin() {
                                   team.name
                                 }
                               </h2>
-
                             </div>
 
                             <strong className="team-score">
-                              {
-                                getTeamScore(
-                                  team.id
-                                )
-                              }
+                              {getTeamScore(
+                                team.id
+                              )}
                             </strong>
-
                           </div>
 
                           <div className="team-players">
-
                             {teamPlayers.map(
-                              (gp) => {
-
+                              (
+                                gp
+                              ) => {
                                 const player =
                                   getPlayer(
                                     gp.player_id
                                   );
 
-                                if (!player)
+                                if (
+                                  !player
+                                )
                                   return null;
 
-                                return (
+                                const isGoalkeeper =
+                                  gp.role ===
+                                  "goalkeeper";
 
+                                return (
                                   <div
                                     className="match-player"
                                     key={
                                       gp.id
                                     }
+                                    style={{
+                                      opacity:
+                                        gp.left_at
+                                          ? 0.5
+                                          : 1,
+                                    }}
                                   >
-
                                     <div className="avatar">
-
                                       {player.photo_url ? (
                                         <img
                                           src={
@@ -2873,11 +3194,9 @@ export default function Admin() {
                                       ) : (
                                         player.name[0]?.toUpperCase()
                                       )}
-
                                     </div>
 
                                     <div className="match-player-info">
-
                                       <b>
                                         {
                                           player.name
@@ -2885,73 +3204,75 @@ export default function Admin() {
                                       </b>
 
                                       <small>
-
-                                        {gp.role ===
-                                        "goalkeeper"
+                                        {isGoalkeeper
                                           ? "🧤 Goleiro"
-                                          : `⚽ ${gp.goals} · 🎯 ${gp.assists}`}
-
+                                          : `⚽ ${gp.goals} gols · 🎯 ${gp.assists} assist.`}
                                       </small>
 
+                                      {isGoalkeeper && (
+                                        <small>
+                                          Sofreu{" "}
+                                          {
+                                            gp.goals_conceded
+                                          }{" "}
+                                          gol
+                                          {gp.goals_conceded !==
+                                          1
+                                            ? "s"
+                                            : ""}
+                                        </small>
+                                      )}
+
+                                      {gp.left_at && (
+                                        <small>
+                                          Saiu do jogo
+                                        </small>
+                                      )}
                                     </div>
 
                                     {/* =================================
-                                        MOVER DE TIME
+                                        TROCAR TIME
                                     ================================= */}
 
-                                    <select
-                                      value={
-                                        team.id
-                                      }
-                                      onChange={(e) =>
-                                        movePlayer(
-                                          gp.id,
-                                          e.target
-                                            .value
-                                        )
-                                      }
-                                      title="Mover jogador"
-                                    >
-
-                                      <option
+                                    {currentGame.status ===
+                                      "open" && (
+                                      <select
                                         value={
-                                          team.id
+                                          gp.team_id ||
+                                          ""
+                                        }
+                                        title="Trocar de time"
+                                        onChange={(
+                                          e
+                                        ) =>
+                                          movePlayer(
+                                            gp.id,
+                                            e
+                                              .target
+                                              .value
+                                          )
                                         }
                                       >
-                                        {
-                                          team.name
-                                        }
-                                      </option>
-
-                                      {teams
-                                        .filter(
+                                        {teams.map(
                                           (
-                                            otherTeam
-                                          ) =>
-                                            otherTeam.id !==
-                                            team.id
-                                        )
-                                        .map(
-                                          (
-                                            otherTeam
+                                            targetTeam
                                           ) => (
                                             <option
                                               key={
-                                                otherTeam.id
+                                                targetTeam.id
                                               }
                                               value={
-                                                otherTeam.id
+                                                targetTeam.id
                                               }
                                             >
-                                              →
                                               {
-                                                otherTeam.name
+                                                targetTeam.name
                                               }
                                             </option>
                                           )
                                         )}
-
-                                    </select>
+                                      </select>
+                                    )}
 
                                     {/* =================================
                                         GOLEIRO
@@ -2960,11 +3281,11 @@ export default function Admin() {
                                     <button
                                       type="button"
                                       className={`goalkeeper-button ${
-                                        gp.role ===
-                                        "goalkeeper"
+                                        isGoalkeeper
                                           ? "active"
                                           : ""
                                       }`}
+                                      title="Definir como goleiro"
                                       onClick={() =>
                                         setGoalkeeper(
                                           gp.id,
@@ -2973,24 +3294,41 @@ export default function Admin() {
                                       }
                                     >
                                       <Shield
-                                        size={16}
+                                        size={
+                                          16
+                                        }
                                       />
                                     </button>
 
-                                  </div>
+                                    {/* =================================
+                                        SAIR DO JOGO
+                                    ================================= */}
 
+                                    {currentGame.status ===
+                                      "open" &&
+                                      !gp.left_at && (
+                                        <button
+                                          type="button"
+                                          className="ghost"
+                                          title="Marcar saída"
+                                          onClick={() =>
+                                            playerLeavesGame(
+                                              gp.id
+                                            )
+                                          }
+                                        >
+                                          Sair
+                                        </button>
+                                      )}
+                                  </div>
                                 );
                               }
                             )}
-
                           </div>
 
                           {goalkeeper && (
-
                             <div className="goalkeeper-label">
-
-                              🧤 Goleiro:{" "}
-
+                              🧤 Goleiro atual:{" "}
                               <b>
                                 {
                                   getPlayer(
@@ -2998,32 +3336,27 @@ export default function Admin() {
                                   )?.name
                                 }
                               </b>
-
-                              {" · "}
-                              Sofreu{" "}
-                              {
-                                goalkeeper.goals_conceded
-                              }
-
                             </div>
-
                           )}
 
+                          <div className="muted">
+                            {
+                              teamPlayers.length
+                            }{" "}
+                            jogadores
+                          </div>
                         </div>
                       );
                     }
                   )}
-
                 </div>
 
-                {/* =================================================
-                    ESTATÍSTICAS
-                ================================================= */}
+                {/* =============================================
+                    RESUMO DO JOGO
+                ============================================= */}
 
                 <div className="stats">
-
                   <div>
-
                     <Target />
 
                     <b>
@@ -3031,36 +3364,18 @@ export default function Admin() {
                     </b>
 
                     <span>
-
-                      {(() => {
-
-                        const top =
-                          getTopScorer();
-
-                        if (!top)
-                          return "Nenhum gol";
-
-                        return `${
-                          getPlayer(
-                            top.player_id
-                          )?.name
-                        } — ${
-                          top.goals
-                        } gol${
-                          top.goals !==
-                          1
-                            ? "s"
-                            : ""
-                        }`;
-
-                      })()}
-
+                      {topScorer
+                        ? `${topScorer.player?.name} — ${topScorer.goals} gol${
+                            topScorer.goals !==
+                            1
+                              ? "s"
+                              : ""
+                          }`
+                        : "Nenhum gol"}
                     </span>
-
                   </div>
 
                   <div>
-
                     <Trophy />
 
                     <b>
@@ -3068,116 +3383,35 @@ export default function Admin() {
                     </b>
 
                     <span>
-
-                      {(() => {
-
-                        const top =
-                          getTopAssister();
-
-                        if (!top)
-                          return "Nenhuma assistência";
-
-                        return `${
-                          getPlayer(
-                            top.player_id
-                          )?.name
-                        } — ${
-                          top.assists
-                        } assist.`;
-
-                      })()}
-
+                      {topAssist
+                        ? `${topAssist.player?.name} — ${topAssist.assists} assist.`
+                        : "Nenhuma assistência"}
                     </span>
-
                   </div>
-
                 </div>
 
-              </>
+                {/* =============================================
+                    PRÓXIMO JOGO
+                ============================================= */}
 
-            ) : (
-
-              /* ==================================================
-                 ENTRE JOGOS
-              ================================================== */
-
-              <>
-
-                <div className="card">
-
-                  <div className="empty-box">
-
-                    <CheckCircle2
-                      size={38}
-                    />
-
-                    <b>
-                      Jogo finalizado
-                    </b>
-
-                    <span>
-                      O resultado foi
-                      salvo. Escolha
-                      a duração e
-                      inicie o próximo
-                      jogo.
-                    </span>
-
-                    <div className="players-per-team-box">
-
+                {currentGame.status ===
+                  "finished" && (
+                  <div className="card">
+                    <div className="section-title">
                       <div>
+                        <h2>
+                          <ArrowRightLeft />
+                          Próximo jogo
+                        </h2>
 
-                        <b>
-                          Duração do próximo jogo
-                        </b>
-
+                        <p className="muted">
+                          O jogo anterior foi
+                          finalizado. Os
+                          jogadores presentes
+                          serão sorteados
+                          novamente.
+                        </p>
                       </div>
-
-                      <div className="number-control">
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setGameDuration(
-                              (value) =>
-                                Math.max(
-                                  1,
-                                  value - 1
-                                )
-                            )
-                          }
-                        >
-                          <Minus
-                            size={17}
-                          />
-                        </button>
-
-                        <strong>
-                          {
-                            gameDuration
-                          }
-                          min
-                        </strong>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setGameDuration(
-                              (value) =>
-                                Math.min(
-                                  120,
-                                  value + 1
-                                )
-                            )
-                          }
-                        >
-                          <Plus
-                            size={17}
-                          />
-                        </button>
-
-                      </div>
-
                     </div>
 
                     <button
@@ -3187,109 +3421,57 @@ export default function Admin() {
                         startNextGame
                       }
                       disabled={
-                        startingGame ||
-                        presentPlayers.length <
-                          2
+                        startingGame
                       }
                     >
-
                       <Shuffle
                         size={18}
                       />
 
                       {startingGame
                         ? "Sorteando..."
-                        : `Sortear jogo ${
-                            games.length +
-                            1
-                          }`}
-
+                        : "Sortear times e iniciar próximo jogo"}
                     </button>
-
-                  </div>
-
-                </div>
-
-                {/* =================================================
-                    HISTÓRICO
-                ================================================= */}
-
-                {games.length >
-                  0 && (
-
-                  <div className="card">
-
-                    <h2>
-                      <Trophy />
-                      Jogos deste racha
-                    </h2>
-
-                    <div className="racha-games-list large">
-
-                      {games.map(
-                        (game) => (
-
-                          <div
-                            className="game-history-item"
-                            key={
-                              game.id
-                            }
-                          >
-
-                            <div>
-
-                              <b>
-                                Jogo{" "}
-                                {
-                                  game.game_number
-                                }
-                              </b>
-
-                              <small>
-                                {
-                                  game.duration_minutes
-                                }{" "}
-                                minutos ·{" "}
-                                {game.status ===
-                                "finished"
-                                  ? "Finalizado"
-                                  : "Em andamento"}
-                              </small>
-
-                            </div>
-
-                            <CheckCircle2
-                              size={18}
-                            />
-
-                          </div>
-
-                        )
-                      )}
-
-                    </div>
-
                   </div>
                 )}
-
               </>
-            )}
+            ) : (
+              <div className="card">
+                <div className="empty-box">
+                  <Trophy size={32} />
 
+                  <b>
+                    Nenhum jogo aberto
+                  </b>
+
+                  <span>
+                    Finalize o jogo anterior
+                    ou inicie um novo jogo.
+                  </span>
+
+                  <button
+                    className="button"
+                    type="button"
+                    onClick={
+                      startNextGame
+                    }
+                    disabled={
+                      startingGame ||
+                      presentPlayers.length <
+                        2
+                    }
+                  >
+                    <Shuffle
+                      size={18}
+                    />
+                    Iniciar jogo
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
-
       </section>
     </main>
   );
-
-  // =========================================================
-  // LOGOUT
-  // =========================================================
-
-  async function logout() {
-    await supabase.auth.signOut();
-
-    location.href =
-      "/admin/login";
-  }
 }
