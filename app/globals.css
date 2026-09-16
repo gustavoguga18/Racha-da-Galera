@@ -904,6 +904,17 @@ textarea::placeholder {
   box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.06);
 }
 
+.versus-team {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.versus {
+  margin-left: 4px;
+  font-weight: 800;
+}
+
 .score-actions {
   display: flex;
   justify-content: center;
