@@ -1809,8 +1809,23 @@ function parseWhatsAppList(text: string) {
         }
       }
 
-      await loadGame(currentGame);
-      await loadPlayers(groupId);
+      // Registra o gol individual no histórico
+const { error: goalHistoryError } = await supabase
+  .from("racha_game_goals")
+  .insert({
+    game_id: currentGame.id,
+    scorer_id: scorer.id,
+    assist_id: goalForm.assist || null,
+    team_id: scorer.pool_team_id,
+    is_own_goal: isOwnGoal,
+  });
+
+if (goalHistoryError) {
+  throw goalHistoryError;
+}
+
+await loadGame(currentGame);
+await loadPlayers(groupId);
 
       setGoalForm({
         scorer: "",
