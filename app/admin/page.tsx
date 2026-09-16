@@ -97,6 +97,7 @@ type GamePlayer = {
   goals: number;
   assists: number;
   goals_conceded: number;
+  own_goals: number;
   entered_at: string;
   left_at: string | null;
 };
@@ -131,6 +132,8 @@ type PlayerRanking = {
   goals: number;
   assists: number;
   conceded: number;
+  ownGoals: number;
+  overall: number;
 };
 
 /* =========================================================
@@ -603,33 +606,6 @@ export default function Admin() {
         );
       } else {
         setNextGameTeams([]);
-      }
-    } else if (loaded.status === "open" && teams.length >= 2) {
-      /*
-        Recuperação automática: se o racha foi criado, os times
-        existem, mas o Jogo 1 não foi criado (por exemplo, uma
-        tentativa anterior falhou), criamos novamente o primeiro jogo.
-      */
-      try {
-        const firstGame = await createGame(
-          loaded,
-          1,
-          teams[0],
-          teams[1]
-        );
-
-        await loadGames(loaded.id);
-        await loadGame(firstGame);
-      } catch (createError) {
-        console.error(
-          "Erro ao recuperar o Jogo 1:",
-          createError
-        );
-        alert(
-          createError instanceof Error
-            ? createError.message
-            : "Não foi possível criar o Jogo 1."
-        );
       }
     }
 
@@ -1105,6 +1081,7 @@ export default function Admin() {
       pool_team_id: string;
       player_id: string;
       role: "field";
+      own_goals: number;
     }[] = [];
 
     for (const team of [
@@ -1137,6 +1114,7 @@ export default function Admin() {
             player_id:
               membership.player_id,
             role: "field",
+            own_goals: 0,
           });
         }
       }
@@ -1375,17 +1353,29 @@ export default function Admin() {
   ======================================================= */
 
   function getTeamScore(teamId: string) {
-    return gamePlayers
+    const regularGoals = gamePlayers
       .filter(
         (player) =>
-          player.pool_team_id ===
-          teamId
+          player.pool_team_id === teamId
       )
       .reduce(
         (total, player) =>
-          total + player.goals,
+          total + (player.goals || 0),
         0
       );
+
+    const ownGoals = gamePlayers
+      .filter(
+        (player) =>
+          player.pool_team_id !== teamId
+      )
+      .reduce(
+        (total, player) =>
+          total + (player.own_goals || 0),
+        0
+      );
+
+    return regularGoals + ownGoals;
   }
 
   /* =======================================================
@@ -1525,159 +1515,140 @@ export default function Admin() {
     if (!currentGame) return;
 
     if (!goalForm.scorer) {
-      alert(
-        "Selecione quem fez o gol."
-      );
-
+      alert("Selecione quem fez o gol.");
       return;
     }
 
-    const scorer =
-      getGamePlayer(
-        goalForm.scorer
-      );
+    const scorer = getGamePlayer(goalForm.scorer);
 
-    if (
-      !scorer ||
-      !scorer.pool_team_id
-    ) {
-      alert(
-        "Jogador inválido."
-      );
-
+    if (!scorer || !scorer.pool_team_id) {
+      alert("Jogador inválido.");
       return;
     }
 
-    if (
-      goalForm.assist ===
-      goalForm.scorer
-    ) {
-      alert(
-        "O jogador não pode dar assistência para o próprio gol."
-      );
+    const isOwnGoal =
+      goalForm.concededTeam === scorer.pool_team_id;
 
+    if (!goalForm.concededTeam) {
+      alert("Selecione o time que sofreu o gol.");
       return;
     }
 
-    if (
-      !goalForm.concededTeam
-    ) {
-      alert(
-        "Selecione o time que sofreu o gol."
-      );
-
+    if (!isOwnGoal && goalForm.assist === goalForm.scorer) {
+      alert("O jogador não pode dar assistência para o próprio gol.");
       return;
     }
 
-    if (
-      goalForm.concededTeam ===
-      scorer.pool_team_id
-    ) {
-      alert(
-        "O time que marcou não pode ser o time que sofreu o gol."
-      );
+    if (goalForm.assist) {
+      const assister = getGamePlayer(goalForm.assist);
 
-      return;
+      if (
+        !assister ||
+        assister.pool_team_id !== scorer.pool_team_id ||
+        isOwnGoal
+      ) {
+        alert(
+          "A assistência deve ser de um jogador do mesmo time e não existe em gol contra."
+        );
+        return;
+      }
     }
 
     setSavingGoal(true);
 
     try {
       /*
-        Gol do jogador.
+        Gol normal:
+        - soma gol ao jogador
+        - soma assistência ao companheiro, se houver
+        - soma 1 gol sofrido ao goleiro do time adversário
+
+        Gol contra:
+        - NÃO soma gol ao jogador
+        - soma 1 gol contra ao jogador
+        - soma 1 gol sofrido ao goleiro do próprio time
+        - o placar do adversário será calculado a partir do own_goals
       */
+      if (isOwnGoal) {
+        const { error: ownGoalError } = await supabase
+          .from("racha_game_players")
+          .update({
+            own_goals: (scorer.own_goals || 0) + 1,
+          })
+          .eq("id", scorer.id);
 
-      const {
-        error: goalError,
-      } = await supabase
-        .from("racha_game_players")
-        .update({
-          goals:
-            scorer.goals + 1,
-        })
-        .eq(
-          "id",
-          scorer.id
-        );
+        if (ownGoalError) throw ownGoalError;
 
-      if (goalError) {
-        throw goalError;
-      }
+        const goalkeeper = getGoalkeeper(scorer.pool_team_id);
 
-      /*
-        Assistência.
-      */
-
-      if (goalForm.assist) {
-        const assister =
-          getGamePlayer(
-            goalForm.assist
-          );
-
-        if (assister) {
-          await supabase
-            .from(
-              "racha_game_players"
-            )
+        if (goalkeeper) {
+          const { error: keeperError } = await supabase
+            .from("racha_game_players")
             .update({
-              assists:
-                assister.assists +
-                1,
+              goals_conceded:
+                goalkeeper.goals_conceded + 1,
             })
-            .eq(
-              "id",
-              assister.id
-            );
+            .eq("id", goalkeeper.id);
+
+          if (keeperError) throw keeperError;
+        }
+      } else {
+        const { error: goalError } = await supabase
+          .from("racha_game_players")
+          .update({
+            goals: scorer.goals + 1,
+          })
+          .eq("id", scorer.id);
+
+        if (goalError) throw goalError;
+
+        if (goalForm.assist) {
+          const assister = getGamePlayer(goalForm.assist);
+
+          if (assister) {
+            const { error: assistError } = await supabase
+              .from("racha_game_players")
+              .update({
+                assists: assister.assists + 1,
+              })
+              .eq("id", assister.id);
+
+            if (assistError) throw assistError;
+          }
+        }
+
+        const goalkeeper = getGoalkeeper(goalForm.concededTeam);
+
+        if (goalkeeper) {
+          const { error: keeperError } = await supabase
+            .from("racha_game_players")
+            .update({
+              goals_conceded:
+                goalkeeper.goals_conceded + 1,
+            })
+            .eq("id", goalkeeper.id);
+
+          if (keeperError) throw keeperError;
         }
       }
 
-      /*
-        Gol sofrido pelo goleiro.
-      */
+      await loadGame(currentGame);
+      await loadPlayers(groupId);
 
-      const goalkeeper =
-        getGoalkeeper(
-          goalForm.concededTeam
-        );
-
-      if (goalkeeper) {
-        await supabase
-          .from(
-            "racha_game_players"
-          )
-          .update({
-            goals_conceded:
-              goalkeeper.goals_conceded +
-              1,
-          })
-          .eq(
-            "id",
-            goalkeeper.id
-          );
-      }
-
-      await loadGame(
-        currentGame
-      );
-
-      await loadPlayers(
-        groupId
-      );
-
+      setGoalForm({
+        scorer: "",
+        assist: "",
+        concededTeam: "",
+      });
       setShowGoalForm(false);
     } catch (error) {
-      console.error(
-        "Erro ao registrar gol:",
-        error
-      );
-
-      alert(
-        "Não foi possível registrar o gol."
-      );
+      console.error("Erro ao registrar gol:", error);
+      alert("Não foi possível registrar o gol.");
     } finally {
       setSavingGoal(false);
     }
   }
+
 
   /* =======================================================
      TIMER
@@ -2108,7 +2079,7 @@ export default function Admin() {
       (currentPlayersData ||
         []) as GamePlayer[];
 
-    const scoreA =
+    const regularScoreA =
       currentPlayers
         .filter(
           (player) =>
@@ -2121,11 +2092,11 @@ export default function Admin() {
             player
           ) =>
             total +
-            player.goals,
+            (player.goals || 0),
           0
         );
 
-    const scoreB =
+    const regularScoreB =
       currentPlayers
         .filter(
           (player) =>
@@ -2138,9 +2109,49 @@ export default function Admin() {
             player
           ) =>
             total +
-            player.goals,
+            (player.goals || 0),
           0
         );
+
+    const ownGoalsA =
+      currentPlayers
+        .filter(
+          (player) =>
+            player.pool_team_id ===
+            teamA.id
+        )
+        .reduce(
+          (
+            total,
+            player
+          ) =>
+            total +
+            (player.own_goals || 0),
+          0
+        );
+
+    const ownGoalsB =
+      currentPlayers
+        .filter(
+          (player) =>
+            player.pool_team_id ===
+            teamB.id
+        )
+        .reduce(
+          (
+            total,
+            player
+          ) =>
+            total +
+            (player.own_goals || 0),
+          0
+        );
+
+    const scoreA =
+      regularScoreA + ownGoalsB;
+
+    const scoreB =
+      regularScoreB + ownGoalsA;
 
     const totalTeams =
       teams.length;
@@ -2601,13 +2612,18 @@ export default function Admin() {
 
       setNextGameTeams([]);
 
-      await loadGames(
-        racha.id
-      );
+      const refreshedGames =
+        await loadGames(racha.id);
 
-      await loadPlayers(
-        groupId
-      );
+      await loadPlayers(groupId);
+
+      if (poolTeams.length > 0) {
+        await loadFinalStats(
+          racha.id,
+          poolTeams,
+          refreshedGames
+        );
+      }
     } catch (error) {
       console.error(
         "Erro ao finalizar racha:",
@@ -2622,119 +2638,40 @@ export default function Admin() {
     }
   }
 
+  function calculateRachaRating(
+    goals: number,
+    assists: number,
+    conceded: number,
+    ownGoals: number,
+    present: boolean
+  ) {
+    /*
+      Nota inspirada em sistemas de rating de partidas:
+      - começa em 6.0
+      - gols têm maior impacto
+      - assistência ajuda
+      - gols sofridos como goleiro reduzem
+      - gol contra tem penalização maior
+      - presença no racha dá pequeno bônus
+      - sempre entre 0.0 e 10.0
+    */
+    const rating =
+      6 +
+      goals * 0.65 +
+      assists * 0.35 +
+      (present ? 0.15 : 0) -
+      conceded * 0.45 -
+      ownGoals * 1.25;
+
+    return Math.max(
+      0,
+      Math.min(10, Number(rating.toFixed(1)))
+    );
+  }
+
   /* =======================================================
      ESTATÍSTICAS FINAIS
   ======================================================= */
-
-  const finalStats = useMemo(() => {
-    if (
-      !racha ||
-      !poolTeams.length ||
-      !games.length
-    ) {
-      return {
-        teams: [] as TeamSummary[],
-        players: [] as PlayerRanking[],
-      };
-    }
-
-    /*
-      Agregamos os jogadores de TODOS os jogos.
-    */
-
-    const playerMap =
-      new Map<
-        string,
-        {
-          goals: number;
-          assists: number;
-          conceded: number;
-        }
-      >();
-
-    /*
-      Primeiro usamos os dados carregados
-      do jogo atual e depois consultamos os
-      dados históricos abaixo quando possível.
-    */
-
-    for (
-      const player of gamePlayers
-    ) {
-      const current =
-        playerMap.get(
-          player.player_id
-        ) || {
-          goals: 0,
-          assists: 0,
-          conceded: 0,
-        };
-
-      current.goals +=
-        player.goals;
-
-      current.assists +=
-        player.assists;
-
-      current.conceded +=
-        player.goals_conceded;
-
-      playerMap.set(
-        player.player_id,
-        current
-      );
-    }
-
-    /*
-      Para a estatística completa do racha,
-      o carregamento definitivo é feito
-      por loadFinalStats().
-    */
-
-    const ranking =
-      Array.from(
-        playerMap.entries()
-      )
-        .map(
-          ([playerId, stats]) => ({
-            player:
-              getPlayer(
-                playerId
-              ),
-            ...stats,
-          })
-        )
-        .sort(
-          (a, b) => {
-            if (
-              b.goals !==
-              a.goals
-            ) {
-              return (
-                b.goals -
-                a.goals
-              );
-            }
-
-            return (
-              b.assists -
-              a.assists
-            );
-          }
-        );
-
-    return {
-      teams: [],
-      players:
-        ranking,
-    };
-  }, [
-    racha,
-    poolTeams,
-    games,
-    gamePlayers,
-    players,
-  ]);
 
   const [
     finalTeamStats,
@@ -2759,317 +2696,211 @@ export default function Admin() {
     teams: PoolTeam[],
     gameList: Game[]
   ) {
-    if (
-      !rachaId ||
-      teams.length === 0
-    ) {
+    if (!rachaId || teams.length === 0) {
       setFinalTeamStats([]);
       setFinalPlayerStats([]);
-
       return;
     }
 
-    /*
-      Todos os jogos.
-    */
+    const gameIds = gameList.map((game) => game.id);
 
-    const gameIds =
-      gameList.map(
-        (game) => game.id
-      );
-
-    if (
-      gameIds.length ===
-      0
-    ) {
+    if (gameIds.length === 0) {
       setFinalTeamStats([]);
       setFinalPlayerStats([]);
-
       return;
     }
 
-    const {
-      data: allGamePlayersData,
-    } = await supabase
-      .from("racha_game_players")
-      .select("*")
-      .in(
-        "game_id",
-        gameIds
+    const [
+      { data: allGamePlayersData, error: gamePlayersError },
+      { data: attendanceData },
+    ] = await Promise.all([
+      supabase
+        .from("racha_game_players")
+        .select("*")
+        .in("game_id", gameIds),
+      supabase
+        .from("racha_attendance")
+        .select("player_id,present")
+        .eq("racha_id", rachaId)
+        .eq("present", true),
+    ]);
+
+    if (gamePlayersError) {
+      console.error(
+        "Erro ao carregar estatísticas dos jogadores:",
+        gamePlayersError
       );
+    }
 
     const allGamePlayers =
-      (allGamePlayersData ||
-        []) as GamePlayer[];
+      (allGamePlayersData || []) as GamePlayer[];
 
-    /*
-      Estatística dos jogadores.
-    */
+    const presentSet = new Set(
+      (attendanceData || []).map((row) => row.player_id)
+    );
 
-    const playerMap =
-      new Map<
-        string,
-        {
-          goals: number;
-          assists: number;
-          conceded: number;
-        }
-      >();
+    const playerMap = new Map<
+      string,
+      {
+        goals: number;
+        assists: number;
+        conceded: number;
+        ownGoals: number;
+      }
+    >();
 
-    for (
-      const gp of allGamePlayers
-    ) {
+    for (const gp of allGamePlayers) {
       const current =
-        playerMap.get(
-          gp.player_id
-        ) || {
+        playerMap.get(gp.player_id) || {
           goals: 0,
           assists: 0,
           conceded: 0,
+          ownGoals: 0,
         };
 
-      current.goals +=
-        gp.goals;
+      current.goals += gp.goals || 0;
+      current.assists += gp.assists || 0;
+      current.conceded += gp.goals_conceded || 0;
+      current.ownGoals += gp.own_goals || 0;
 
-      current.assists +=
-        gp.assists;
-
-      current.conceded +=
-        gp.goals_conceded;
-
-      playerMap.set(
-        gp.player_id,
-        current
-      );
+      playerMap.set(gp.player_id, current);
     }
 
-    const playerRanking =
-      Array.from(
-        playerMap.entries()
-      )
-        .map(
-          ([playerId, stats]) => ({
-            player:
-              getPlayer(
-                playerId
-              ),
-            goals:
-              stats.goals,
-            assists:
-              stats.assists,
-            conceded:
-              stats.conceded,
-          })
-        )
-        .filter(
-          (item) =>
-            item.player
-        )
-        .sort(
-          (a, b) => {
-            if (
-              b.goals !==
-              a.goals
-            ) {
-              return (
-                b.goals -
-                a.goals
-              );
-            }
+    const playerRanking: PlayerRanking[] = Array.from(
+      playerMap.entries()
+    )
+      .map(([playerId, stats]) => {
+        const player = getPlayer(playerId);
 
-            if (
-              b.assists !==
-              a.assists
-            ) {
-              return (
-                b.assists -
-                a.assists
-              );
-            }
+        return {
+          player,
+          goals: stats.goals,
+          assists: stats.assists,
+          conceded: stats.conceded,
+          ownGoals: stats.ownGoals,
+          overall: calculateRachaRating(
+            stats.goals,
+            stats.assists,
+            stats.conceded,
+            stats.ownGoals,
+            presentSet.has(playerId)
+          ),
+        };
+      })
+      .filter((item) => item.player)
+      .sort((a, b) => {
+        if (b.overall !== a.overall) {
+          return b.overall - a.overall;
+        }
 
-            return (
-              a.player!.name.localeCompare(
-                b.player!.name
-              )
-            );
-          }
-        );
+        if (b.goals !== a.goals) {
+          return b.goals - a.goals;
+        }
 
-    setFinalPlayerStats(
-      playerRanking
-    );
+        if (b.assists !== a.assists) {
+          return b.assists - a.assists;
+        }
+
+        return a.player!.name.localeCompare(b.player!.name);
+      });
+
+    setFinalPlayerStats(playerRanking);
 
     /*
-      Estatística dos times.
-
-      Importante:
-
-      "gols sofridos" é calculado pelo placar
-      do adversário em cada jogo.
-
-      Isso funciona mesmo se o goleiro
-      não tiver sido definido.
+      Estatísticas dos times.
+      Gol normal = gol do jogador.
+      Gol contra = gol para o adversário.
     */
-
-    const teamMap =
-      new Map<
-        string,
-        {
-          goals: number;
-          conceded: number;
-        }
-      >();
+    const teamMap = new Map<
+      string,
+      {
+        goals: number;
+        conceded: number;
+      }
+    >();
 
     for (const team of teams) {
-      teamMap.set(
-        team.id,
-        {
-          goals: 0,
-          conceded: 0,
-        }
-      );
+      teamMap.set(team.id, {
+        goals: 0,
+        conceded: 0,
+      });
     }
 
-    for (
-      const game of gameList
-    ) {
-      const {
-        data: gameTeamsData,
-      } = await supabase
-        .from(
-          "racha_game_teams"
-        )
+    for (const game of gameList) {
+      const { data: gameTeamsData } = await supabase
+        .from("racha_game_teams")
         .select("*")
-        .eq(
-          "game_id",
-          game.id
-        );
+        .eq("game_id", game.id);
 
       const currentGameTeams =
-        (gameTeamsData ||
-          []) as GameTeam[];
+        (gameTeamsData || []) as GameTeam[];
 
-      if (
-        currentGameTeams.length !==
-        2
-      ) {
+      if (currentGameTeams.length !== 2) {
         continue;
       }
 
-      const teamA =
-        currentGameTeams[0]
-          .team_id;
+      const teamA = currentGameTeams[0].team_id;
+      const teamB = currentGameTeams[1].team_id;
 
-      const teamB =
-        currentGameTeams[1]
-          .team_id;
+      const gamePlayersForGame = allGamePlayers.filter(
+        (gp) => gp.game_id === game.id
+      );
 
-      const scoreA =
-        allGamePlayers
-          .filter(
-            (gp) =>
-              gp.game_id ===
-                game.id &&
-              gp.pool_team_id ===
-                teamA
-          )
-          .reduce(
-            (
-              total,
-              gp
-            ) =>
-              total +
-              gp.goals,
-            0
-          );
+      const regularGoalsA = gamePlayersForGame
+        .filter((gp) => gp.pool_team_id === teamA)
+        .reduce((total, gp) => total + (gp.goals || 0), 0);
 
-      const scoreB =
-        allGamePlayers
-          .filter(
-            (gp) =>
-              gp.game_id ===
-                game.id &&
-              gp.pool_team_id ===
-                teamB
-          )
-          .reduce(
-            (
-              total,
-              gp
-            ) =>
-              total +
-              gp.goals,
-            0
-          );
+      const regularGoalsB = gamePlayersForGame
+        .filter((gp) => gp.pool_team_id === teamB)
+        .reduce((total, gp) => total + (gp.goals || 0), 0);
 
-      const statsA =
-        teamMap.get(
-          teamA
-        );
+      const ownGoalsA = gamePlayersForGame
+        .filter((gp) => gp.pool_team_id === teamA)
+        .reduce((total, gp) => total + (gp.own_goals || 0), 0);
 
-      const statsB =
-        teamMap.get(
-          teamB
-        );
+      const ownGoalsB = gamePlayersForGame
+        .filter((gp) => gp.pool_team_id === teamB)
+        .reduce((total, gp) => total + (gp.own_goals || 0), 0);
+
+      const scoreA = regularGoalsA + ownGoalsB;
+      const scoreB = regularGoalsB + ownGoalsA;
+
+      const statsA = teamMap.get(teamA);
+      const statsB = teamMap.get(teamB);
 
       if (statsA) {
-        statsA.goals +=
-          scoreA;
-
-        statsA.conceded +=
-          scoreB;
+        statsA.goals += scoreA;
+        statsA.conceded += scoreB;
       }
 
       if (statsB) {
-        statsB.goals +=
-          scoreB;
-
-        statsB.conceded +=
-          scoreA;
+        statsB.goals += scoreB;
+        statsB.conceded += scoreA;
       }
     }
 
-    const teamRanking =
-      teams
-        .map((team) => {
-          const stats =
-            teamMap.get(
-              team.id
-            ) || {
-              goals: 0,
-              conceded: 0,
-            };
+    const teamRanking = teams
+      .map((team) => {
+        const stats = teamMap.get(team.id) || {
+          goals: 0,
+          conceded: 0,
+        };
 
-          return {
-            team,
-            goals:
-              stats.goals,
-            conceded:
-              stats.conceded,
-          };
-        })
-        .sort(
-          (a, b) => {
-            if (
-              b.goals !==
-              a.goals
-            ) {
-              return (
-                b.goals -
-                a.goals
-              );
-            }
+        return {
+          team,
+          goals: stats.goals,
+          conceded: stats.conceded,
+        };
+      })
+      .sort((a, b) => {
+        if (b.goals !== a.goals) {
+          return b.goals - a.goals;
+        }
 
-            return (
-              a.team.team_number -
-              b.team.team_number
-            );
-          }
-        );
+        return a.team.team_number - b.team.team_number;
+      });
 
-    setFinalTeamStats(
-      teamRanking
-    );
+    setFinalTeamStats(teamRanking);
   }
 
   useEffect(() => {
@@ -3807,30 +3638,38 @@ export default function Admin() {
                           </b>
 
                           <small>
-                            ⚽{" "}
-                            {
-                              item.goals
-                            }{" "}
-                            gols
-                            {" · "}
-                            🎯{" "}
-                            {
-                              item.assists
-                            }{" "}
-                            assistências
+                            ⚽ {item.goals} · 🎯 {item.assists}
+                            {item.conceded > 0 &&
+                              ` · 🧤 ${item.conceded}`}
+                            {item.ownGoals > 0 &&
+                              ` · ❌ ${item.ownGoals} gol contra`}
                           </small>
-
-                          {item.conceded >
-                            0 && (
-                            <small>
-                              🧤{" "}
-                              {
-                                item.conceded
-                              }{" "}
-                              gols sofridos como goleiro
-                            </small>
-                          )}
                         </div>
+
+                        <strong
+                          title="Nota do racha"
+                          style={{
+                            minWidth: "42px",
+                            height: "42px",
+                            borderRadius: "12px",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            fontSize: "1.05rem",
+                            fontWeight: 800,
+                            background:
+                              item.overall >= 8
+                                ? "#16a34a"
+                                : item.overall >= 7
+                                  ? "#2563eb"
+                                  : item.overall >= 6
+                                    ? "#ca8a04"
+                                    : "#dc2626",
+                            color: "#fff",
+                          }}
+                        >
+                          {item.overall.toFixed(1)}
+                        </strong>
 
                         {index ===
                           0 && (
@@ -4419,6 +4258,7 @@ export default function Admin() {
                                   ) => ({
                                     ...current,
                                     scorer,
+                                    assist: "",
                                     concededTeam:
                                       opponent?.id ||
                                       "",
@@ -4456,7 +4296,14 @@ export default function Admin() {
 
                           <label>
                             <span>
-                              Assistência
+                              Assistência{" "}
+                              {goalForm.scorer &&
+                                goalForm.concededTeam ===
+                                  getGamePlayer(
+                                    goalForm.scorer
+                                  )?.pool_team_id
+                                ? "(gol contra — sem assistência)"
+                                : ""}
                             </span>
 
                             <select
@@ -4487,7 +4334,16 @@ export default function Admin() {
                                     gp
                                   ) =>
                                     gp.player_id !==
-                                    goalForm.scorer
+                                      goalForm.scorer &&
+                                    gp.pool_team_id ===
+                                      getGamePlayer(
+                                        goalForm.scorer
+                                      )?.pool_team_id &&
+                                    !!goalForm.scorer &&
+                                    goalForm.concededTeam !==
+                                      getGamePlayer(
+                                        goalForm.scorer
+                                      )?.pool_team_id
                                 )
                                 .map(
                                   (
@@ -4518,6 +4374,15 @@ export default function Admin() {
                               Time que sofreu
                               o gol
                             </span>
+                            {goalForm.scorer &&
+                              goalForm.concededTeam ===
+                                getGamePlayer(
+                                  goalForm.scorer
+                                )?.pool_team_id && (
+                              <small className="muted">
+                                ⚠️ Gol contra
+                              </small>
+                            )}
 
                             <select
                               value={
@@ -4531,6 +4396,13 @@ export default function Admin() {
                                     current
                                   ) => ({
                                     ...current,
+                                    assist:
+                                      e.target.value ===
+                                      getGamePlayer(
+                                        goalForm.scorer
+                                      )?.pool_team_id
+                                        ? ""
+                                        : current.assist,
                                     concededTeam:
                                       e.target.value,
                                   })
@@ -4541,18 +4413,7 @@ export default function Admin() {
                                 Selecionar
                               </option>
 
-                              {activeTeams
-                                .filter(
-                                  (
-                                    team
-                                  ) =>
-                                    team.id !==
-                                    getGamePlayer(
-                                      goalForm.scorer
-                                    )
-                                      ?.pool_team_id
-                                )
-                                .map(
+                              {activeTeams.map(
                                   (
                                     team
                                   ) => (
@@ -4879,6 +4740,35 @@ export default function Admin() {
                     </div>
                   </div>
                 )}
+
+              {racha.status === "open" && (
+                <div className="card">
+                  <div className="section-title">
+                    <div>
+                      <h2>
+                        <CheckCircle2 />
+                        Encerrar racha
+                      </h2>
+                      <p className="muted">
+                        Finalize o racha de hoje para gerar o resumo completo,
+                        com estatísticas dos times e notas dos jogadores.
+                      </p>
+                    </div>
+
+                    <button
+                      className="finish-button"
+                      type="button"
+                      onClick={finishRacha}
+                      disabled={finishingRacha}
+                    >
+                      <CheckCircle2 size={17} />
+                      {finishingRacha
+                        ? "Finalizando..."
+                        : "Finalizar racha"}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* =========================================
                   HISTÓRICO DOS JOGOS
