@@ -4188,51 +4188,38 @@ function parseWhatsAppList(text: string) {
                     </div>
 
                     <div className="match-versus">
-                      {activeTeams.map(
-                        (
-                          team,
-                          index
-                        ) => (
-                          <div
-                            className="versus-team"
-                            key={
-                              team.id
-                            }
-                          >
-                            <span
-                              className="team-color"
-                              style={{
-                                backgroundColor:
-                                  team.color,
-                              }}
-                            />
+  {activeTeams.map(
+    (team, index) => (
+      <div
+        className="versus-team"
+        key={team.id}
+      >
+        <span
+          className="team-color"
+          style={{
+            backgroundColor:
+              team.color,
+          }}
+        />
 
-                            <b>
-                              {
-                                team.name
-                              }
-                            </b>
+        <b>
+          {team.name}
+        </b>
 
-                            <strong>
-                              {
-                                getTeamScore(
-                                  team.id
-                                )
-                              }
-                            </strong>
+        <strong>
+          {getTeamScore(team.id)}
+        </strong>
 
-                            {index ===
-                              0 &&
-                              activeTeams.length ===
-                                2 && (
-                                <span className="versus">
-                                  ×
-                                </span>
-                              )}
-                          </div>
-                        )
-                      )}
-                    </div>
+        {index === 0 &&
+          activeTeams.length === 2 && (
+            <span className="versus">
+              ×
+            </span>
+          )}
+      </div>
+    )
+  )}
+</div>
                   </div>
 
                   {/* =======================================
