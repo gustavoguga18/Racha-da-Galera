@@ -4711,18 +4711,16 @@ export default function Admin() {
                       </b>
 
                       <span>
-                        {game.status === "finished"
-                          ? "Finalizado"
-                          : "Em andamento"}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
-        </>
-      )}
-    </main>
-  );
+  {game.status === "finished"
+    ? "Finalizado"
+    : "Em andamento"}
+</span>
+</div>
+))}
+</div>
+</div>
+</>
+)}
+</main>
+);
 }
