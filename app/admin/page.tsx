@@ -91,6 +91,7 @@ type GamePlayer = {
   id: string;
   game_id: string;
   team_id: string | null;
+  pool_team_id: string | null;
   player_id: string;
   role: "field" | "goalkeeper";
   goals: number;
@@ -603,6 +604,33 @@ export default function Admin() {
       } else {
         setNextGameTeams([]);
       }
+    } else if (loaded.status === "open" && teams.length >= 2) {
+      /*
+        Recuperação automática: se o racha foi criado, os times
+        existem, mas o Jogo 1 não foi criado (por exemplo, uma
+        tentativa anterior falhou), criamos novamente o primeiro jogo.
+      */
+      try {
+        const firstGame = await createGame(
+          loaded,
+          1,
+          teams[0],
+          teams[1]
+        );
+
+        await loadGames(loaded.id);
+        await loadGame(firstGame);
+      } catch (createError) {
+        console.error(
+          "Erro ao recuperar o Jogo 1:",
+          createError
+        );
+        alert(
+          createError instanceof Error
+            ? createError.message
+            : "Não foi possível criar o Jogo 1."
+        );
+      }
     }
 
     setLoadingRacha(false);
@@ -1074,7 +1102,7 @@ export default function Admin() {
 
     const gamePlayerRows: {
       game_id: string;
-      team_id: string;
+      pool_team_id: string;
       player_id: string;
       role: "field";
     }[] = [];
@@ -1104,7 +1132,7 @@ export default function Admin() {
           gamePlayerRows.push({
             game_id:
               gameData.id,
-            team_id:
+            pool_team_id:
               team.id,
             player_id:
               membership.player_id,
@@ -1350,7 +1378,7 @@ export default function Admin() {
     return gamePlayers
       .filter(
         (player) =>
-          player.team_id ===
+          player.pool_team_id ===
           teamId
       )
       .reduce(
@@ -1393,7 +1421,7 @@ export default function Admin() {
   ) {
     return gamePlayers.find(
       (player) =>
-        player.team_id ===
+        player.pool_team_id ===
           teamId &&
         player.role ===
           "goalkeeper"
@@ -1511,7 +1539,7 @@ export default function Admin() {
 
     if (
       !scorer ||
-      !scorer.team_id
+      !scorer.pool_team_id
     ) {
       alert(
         "Jogador inválido."
@@ -1543,7 +1571,7 @@ export default function Admin() {
 
     if (
       goalForm.concededTeam ===
-      scorer.team_id
+      scorer.pool_team_id
     ) {
       alert(
         "O time que marcou não pode ser o time que sofreu o gol."
@@ -2084,7 +2112,7 @@ export default function Admin() {
       currentPlayers
         .filter(
           (player) =>
-            player.team_id ===
+            player.pool_team_id ===
             teamA.id
         )
         .reduce(
@@ -2101,7 +2129,7 @@ export default function Admin() {
       currentPlayers
         .filter(
           (player) =>
-            player.team_id ===
+            player.pool_team_id ===
             teamB.id
         )
         .reduce(
@@ -2942,7 +2970,7 @@ export default function Admin() {
             (gp) =>
               gp.game_id ===
                 game.id &&
-              gp.team_id ===
+              gp.pool_team_id ===
                 teamA
           )
           .reduce(
@@ -2961,7 +2989,7 @@ export default function Admin() {
             (gp) =>
               gp.game_id ===
                 game.id &&
-              gp.team_id ===
+              gp.pool_team_id ===
                 teamB
           )
           .reduce(
@@ -4382,7 +4410,7 @@ export default function Admin() {
                                       team
                                     ) =>
                                       team.id !==
-                                      scorerPlayer?.team_id
+                                      scorerPlayer?.pool_team_id
                                   );
 
                                 setGoalForm(
@@ -4522,7 +4550,7 @@ export default function Admin() {
                                     getGamePlayer(
                                       goalForm.scorer
                                     )
-                                      ?.team_id
+                                      ?.pool_team_id
                                 )
                                 .map(
                                   (
@@ -4591,7 +4619,7 @@ export default function Admin() {
                             (
                               player
                             ) =>
-                              player.team_id ===
+                              player.pool_team_id ===
                               team.id
                           );
 
