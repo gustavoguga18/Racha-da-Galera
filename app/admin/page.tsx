@@ -4188,36 +4188,48 @@ function parseWhatsAppList(text: string) {
                     </div>
 
                     <div className="match-versus">
-  {activeTeams.map(
-    (team, index) => (
-      <div
-        className="versus-team"
-        key={team.id}
-      >
+  {activeTeams.length === 2 && (
+    <>
+      <div className="versus-team">
         <span
           className="team-color"
           style={{
             backgroundColor:
-              team.color,
+              activeTeams[0].color,
           }}
         />
 
         <b>
-          {team.name}
+          {activeTeams[0].name}
         </b>
-
-        <strong>
-          {getTeamScore(team.id)}
-        </strong>
-
-        {index === 0 &&
-          activeTeams.length === 2 && (
-            <span className="versus">
-              ×
-            </span>
-          )}
       </div>
-    )
+
+      <strong className="team-score">
+        {getTeamScore(activeTeams[0].id)}
+      </strong>
+
+      <span className="versus">
+        ×
+      </span>
+
+      <strong className="team-score">
+        {getTeamScore(activeTeams[1].id)}
+      </strong>
+
+      <div className="versus-team">
+        <span
+          className="team-color"
+          style={{
+            backgroundColor:
+              activeTeams[1].color,
+          }}
+        />
+
+        <b>
+          {activeTeams[1].name}
+        </b>
+      </div>
+    </>
   )}
 </div>
                   </div>
